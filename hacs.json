@@ -1,0 +1,6 @@
+{
+  "name": "Retro Control Panel Card",
+  "render_readme": true,
+  "filename": "retro-controlpanel-card.js",
+  "homeassistant": "2024.4.0"
+}

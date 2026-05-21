@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Retro Control Panel — fixture</title>
+  <style>
+    html, body { margin: 0; padding: 0; background: #0c0a08; min-height: 100vh; }
+    #host { padding: 2em; max-width: 800px; margin: 0 auto; }
+    /* Mimic <ha-card> just enough for Playwright tests; the card targets it
+       via shadow-DOM CSS so a bare div is fine. */
+    ha-card { display: block; }
+    .theme-buttons { margin-top: 1em; text-align: center; }
+    .theme-buttons button { margin: 0 0.25em; padding: 0.4em 0.8em; }
+  </style>
+</head>
+<body>
+  <div id="host"></div>
+  <div class="theme-buttons">
+    <button id="theme-amber">Amber</button>
+    <button id="theme-green">Green</button>
+    <button id="theme-red">Red</button>
+    <button id="label-etched">Etched labels</button>
+    <button id="label-dymo">Dymo labels</button>
+    <button id="set-temp">Set temp = 42.5</button>
+    <button id="set-toggle-off">Toggle off</button>
+  </div>
+
+  <script type="module" src="/dist/retro-controlpanel-card.js"></script>
+
+  <script type="module">
+    /**
+     * Build a fake `hass` object - the card and controls only ever touch
+     * `states[entity].state/attributes` and call `callService(domain, service, data)`.
+     */
+    const states = {
+      "sensor.temperature_a": { entity_id: "sensor.temperature_a", state: "21.5",
+        attributes: { friendly_name: "Cabin Temp", unit_of_measurement: "°C" } },
+      "sensor.temperature_b": { entity_id: "sensor.temperature_b", state: "87.3",
+        attributes: { friendly_name: "Engine Temp", unit_of_measurement: "°C" } },
+      "sensor.signal":        { entity_id: "sensor.signal",        state: "55",
+        attributes: { friendly_name: "Signal", unit_of_measurement: "%" } },
+      "sensor.speed":         { entity_id: "sensor.speed",         state: "60",
+        attributes: { friendly_name: "Speed", unit_of_measurement: "km/h" } },
+      "input_boolean.toggle": { entity_id: "input_boolean.toggle", state: "off",
+        attributes: { friendly_name: "Power" } },
+      "input_button.fire":    { entity_id: "input_button.fire",    state: "unknown",
+        attributes: { friendly_name: "Fire" } },
+      "script.launch":        { entity_id: "script.launch",        state: "off",
+        attributes: { friendly_name: "Launch" } },
+    };
+    const calls = [];
+    const hass = {
+      states,
+      callService: async (domain, service, data) => {
+        calls.push({ domain, service, data });
+        // Mirror HA's toggle behaviour so the UI updates after a click.
+        if (service === "toggle" && data?.entity_id && states[data.entity_id]) {
+          const s = states[data.entity_id];
+          s.state = s.state === "on" ? "off" : "on";
+          renderHass();
+        }
+      },
+    };
+    // Expose for the tests to introspect.
+    window.__retro = { hass, calls, states };
+
+    const card = document.createElement("retro-controlpanel-card");
+    const baseConfig = {
+      type: "custom:retro-controlpanel-card",
+      title: "Reactor Control",
+      theme: "amber",
+      label_style: "etched",
+      rows: [
+        {
+          entities: [
+            { entity: "sensor.temperature_a", type: "seven_segment",
+              num_digits: 4, maximum_fraction_digits: 1, leading_zeros: true, unit: "°C" },
+            { entity: "sensor.signal", type: "vu_meter",
+              min: 0, max: 100, segments: 10, green_threshold: 60, yellow_threshold: 85 },
+            { entity: "input_boolean.toggle", type: "flip_switch" },
+          ],
+        },
+        {
+          entities: [
+            { entity: "sensor.speed", type: "gauge",
+              min: 0, max: 120, unit: "km/h", major_ticks: 5, minor_ticks: 4 },
+            { entity: "input_button.fire", type: "button", color: "red", text: "FIRE" },
+            { entity: "script.launch", type: "button", color: "amber", text: "LAUNCH" },
+          ],
+        },
+      ],
+    };
+    card.setConfig(baseConfig);
+    card.hass = hass;
+    document.getElementById("host").appendChild(card);
+    window.__retro.card = card;
+
+    function renderHass() {
+      // Reassign to trigger Lit reactivity.
+      card.hass = { ...hass, states: { ...states } };
+    }
+    window.__retro.renderHass = renderHass;
+
+    function setConfig(updates) {
+      card.setConfig({ ...baseConfig, ...updates });
+    }
+    window.__retro.setConfig = setConfig;
+
+    // Wire fixture buttons so a human can play with it; tests don't need them.
+    document.getElementById("theme-amber").onclick = () => setConfig({ theme: "amber" });
+    document.getElementById("theme-green").onclick = () => setConfig({ theme: "green" });
+    document.getElementById("theme-red").onclick   = () => setConfig({ theme: "red" });
+    document.getElementById("label-etched").onclick = () => setConfig({ label_style: "etched" });
+    document.getElementById("label-dymo").onclick   = () => setConfig({ label_style: "dymo" });
+    document.getElementById("set-temp").onclick = () => {
+      states["sensor.temperature_a"].state = "42.5";
+      renderHass();
+    };
+    document.getElementById("set-toggle-off").onclick = () => {
+      states["input_boolean.toggle"].state = "off";
+      renderHass();
+    };
+  </script>
+</body>
+</html>

@@ -1,0 +1,51 @@
+{
+  "name": "retro-controlpanel-card",
+  "version": "0.1.0",
+  "description": "A Home Assistant Lovelace custom card that renders entities as a retro 60s/70s-style control panel: flip switches, glowing buttons, VU meter, analog gauge and seven-segment displays.",
+  "type": "module",
+  "main": "dist/retro-controlpanel-card.js",
+  "scripts": {
+    "build": "rollup -c",
+    "watch": "rollup -c -w",
+    "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "test": "vitest run",
+    "test:report": "vitest run --reporter=default --reporter=junit --reporter=json --outputFile.junit=reports/junit-unit.xml --outputFile.json=reports/unit.json",
+    "report:html": "node tools/json-to-html.mjs reports/unit.json reports/unit-report.html",
+    "test:watch": "vitest",
+    "test:ui": "playwright test",
+    "test:ui:install": "playwright install chromium",
+    "serve:ui": "http-server . -p 8765 -c-1 --silent --cors"
+  },
+  "keywords": [
+    "home-assistant",
+    "lovelace",
+    "custom-card",
+    "hacs",
+    "retro"
+  ],
+  "author": "Fahed Jibril",
+  "license": "MIT",
+  "dependencies": {
+    "lit": "^3.1.4",
+    "custom-card-helpers": "^1.9.0"
+  },
+  "devDependencies": {
+    "home-assistant-js-websocket": "^9.4.0",
+    "@playwright/test": "1.60.0",
+    "@rollup/plugin-commonjs": "^26.0.1",
+    "@rollup/plugin-json": "^6.1.0",
+    "@rollup/plugin-node-resolve": "^15.2.3",
+    "@rollup/plugin-terser": "^0.4.4",
+    "@rollup/plugin-typescript": "^11.1.6",
+    "@types/node": "^20.14.0",
+    "@typescript-eslint/eslint-plugin": "^7.13.0",
+    "@typescript-eslint/parser": "^7.13.0",
+    "eslint": "^8.57.0",
+    "happy-dom": "^14.12.0",
+    "http-server": "^14.1.1",
+    "rollup": "^4.18.0",
+    "tslib": "^2.6.3",
+    "typescript": "^5.4.5",
+    "vitest": "^1.6.0"
+  }
+}

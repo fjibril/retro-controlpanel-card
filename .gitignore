@@ -1,0 +1,16 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+coverage/
+playwright-report/
+test-results/
+reports/
+.vscode/
+.idea/
+
+# Claude Code local/machine-specific config (paths, local settings).
+.claude/
+
+# Local Home Assistant container's persistent config - hundreds of runtime files.
+dev/ha-config/
