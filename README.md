@@ -244,6 +244,23 @@ tests/
   ui/                          playwright spec + fixture page
 ```
 
+### Releasing (CI)
+
+[`.github/workflows/release.yml`](.github/workflows/release.yml) runs both test
+suites on every push/PR. Pushing a `v*` tag additionally builds the card and
+publishes a GitHub release with `retro-controlpanel-card.js` attached — which is
+the file HACS downloads. To cut a release:
+
+```bash
+# bump "version" in package.json + CARD_VERSION in src/const.ts first
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Test reporting in CI is all native to GitHub Actions: a pass/fail table renders
+in the run's **job summary**, the full HTML reports upload as the
+**test-reports** artifact, and `test-reports.zip` is attached to the release.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

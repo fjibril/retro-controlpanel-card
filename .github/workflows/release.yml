@@ -1,0 +1,77 @@
+name: CI & Release
+
+# Runs the full test suite on every push/PR (CI), and additionally builds the
+# card + cuts a GitHub release when a v* tag is pushed. The release carries
+# dist/retro-controlpanel-card.js, which is what HACS downloads.
+on:
+  push:
+    branches: ["main"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write # needed for the release step to create releases
+
+jobs:
+  build-test-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      # --- tests: always run both suites and always produce reports ---
+      - name: Unit tests
+        run: npm run test:report
+
+      - name: Unit HTML report
+        if: always()
+        run: npm run report:html
+
+      - name: Install Playwright browser
+        if: always()
+        run: npx playwright install --with-deps chromium
+
+      - name: UI tests
+        if: always()
+        run: npm run test:ui
+
+      # --- native report surfacing ---
+      - name: Job summary
+        if: always()
+        run: node tools/ci-summary.mjs
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: reports/
+          if-no-files-found: warn
+
+      # --- build (validated on every run; release only on tags) ---
+      - name: Build card
+        run: npm run build
+
+      - name: Bundle reports for the release
+        if: success() && startsWith(github.ref, 'refs/tags/')
+        run: cd reports && zip -r ../test-reports.zip . && cd ..
+
+      - name: Create GitHub release
+        if: success() && startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            dist/retro-controlpanel-card.js \
+            test-reports.zip \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes
