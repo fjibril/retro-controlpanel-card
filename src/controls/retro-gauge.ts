@@ -4,6 +4,7 @@ import { RetroControlBase } from "./retro-control-base.js";
 import type { GaugeConfig } from "./../types.js";
 import { actionHandler, hasAction } from "./../action-handler-directive.js";
 import "./retro-label.js";
+import "./retro-mini-segments.js";
 
 /**
  * Semicircular analog gauge with sweeping needle, painted scale and tick
@@ -98,6 +99,13 @@ export class RetroGauge extends RetroControlBase {
       text-anchor: middle;
       text-transform: uppercase;
     }
+    /* Tiny value readout, sunk into the bottom-centre of the dial. */
+    .value-readout {
+      bottom: 0.18em;
+      left: 50%;
+      font-size: 1.0em;
+      z-index: 3;
+    }
   `;
 
   render() {
@@ -162,8 +170,16 @@ export class RetroGauge extends RetroControlBase {
             ` : nothing}
             <circle class="needle-cap" cx="50" cy="50" r="3" />
           </svg>
-        </div>
+        </div>        
       </div>
+      ${cfg.show_value
+          ? html`<retro-mini-segments
+              class="value-readout"
+              style=${cfg.value_size ? `font-size:${cfg.value_size}em` : nothing}
+              .value=${this.numericState()}
+              .digits=${this.valueDigits()}
+            ></retro-mini-segments>`
+          : nothing}
       <retro-label .text=${this.resolvedLabel()} .styleName=${this.labelStyle}></retro-label>
     `;
   }

@@ -4,6 +4,7 @@ import { RetroControlBase } from "./retro-control-base.js";
 import type { VuMeterConfig } from "./../types.js";
 import { actionHandler, hasAction } from "./../action-handler-directive.js";
 import "./retro-label.js";
+import "./retro-mini-segments.js";
 
 /**
  * Classic stacked-LED VU meter. Bottom segments are green, top segments are
@@ -108,6 +109,12 @@ export class RetroVuMeter extends RetroControlBase {
       gap: 0.15em;
     }
     .scale.horizontal .tickline { width: 1px; height: 0.35em; background: currentColor; opacity: 0.65; }
+
+    /* Tiny value readout sits just below the meter. */
+    retro-mini-segments {
+      font-size: 1.0em;
+      margin-top: 0.1em;
+    }
   `;
 
   render() {
@@ -143,6 +150,13 @@ export class RetroVuMeter extends RetroControlBase {
         </div>
         ${orientation === "horizontal" ? scale : nothing}
       </div>
+      ${cfg.show_value
+        ? html`<retro-mini-segments
+            style=${cfg.value_size ? `font-size:${cfg.value_size}em` : nothing}
+            .value=${this.numericState()}
+            .digits=${this.valueDigits()}
+          ></retro-mini-segments>`
+        : nothing}
       <retro-label .text=${this.resolvedLabel()} .styleName=${this.labelStyle}></retro-label>
     `;
   }

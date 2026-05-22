@@ -98,4 +98,21 @@ describe("retro-vu-meter", () => {
     const segs = el.shadowRoot?.querySelectorAll(".seg") ?? [];
     expect(segs.length).toBe(8);
   });
+
+  it("hides the value readout unless show_value is set", async () => {
+    const el = await build({}, "55");
+    toDispose.push(el);
+    expect(el.shadowRoot?.querySelector("retro-mini-segments")).toBeNull();
+  });
+
+  it("computes value + digit count for the readout", async () => {
+    // The readout element is rendered via a Lit conditional child-part, which
+    // happy-dom doesn't reliably insert (it works in a real browser - covered
+    // by the Playwright suite). Verify the inputs it would receive instead.
+    const el = await build({ show_value: true, min: 0, max: 100 }, "55");
+    toDispose.push(el);
+    const c = el as unknown as { numericState(): number | null; valueDigits(): number };
+    expect(c.numericState()).toBe(55);
+    expect(c.valueDigits()).toBe(3); // max 100 -> 3 digits
+  });
 });

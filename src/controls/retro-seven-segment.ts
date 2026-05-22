@@ -1,9 +1,10 @@
-import { html, css, svg, nothing } from "lit";
+import { html, css, nothing } from "lit";
 import { customElement } from "lit/decorators.js";
 import { RetroControlBase } from "./retro-control-base.js";
 import type { GlowColor, SevenSegmentConfig } from "./../types.js";
 import { actionHandler, hasAction } from "./../action-handler-directive.js";
 import { GLOW_PALETTE } from "./glow-palette.js";
+import { digitSvg } from "./segment-shapes.js";
 import "./retro-label.js";
 
 /**
@@ -165,23 +166,7 @@ export class RetroSevenSegment extends RetroControlBase {
   }
 
   private renderDigit(ch: string) {
-    const segs = SEGMENT_MAP[ch] ?? "";
-    const on = (name: string) => (segs.includes(name) ? "seg-on" : "seg-off");
-    // Straight stretched-hexagon segments: flat rectangular body with the
-    // two short ends chamfered to a point - the classic "modern" 7-seg look,
-    // as opposed to the slanted parallelogram retro style.
-    return svg`
-      <svg viewBox="0 0 50 80" preserveAspectRatio="xMidYMid meet"
-           xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-        <polygon class=${on("a")} points="15,4 35,4 38,7 35,10 15,10 12,7" />
-        <polygon class=${on("b")} points="40,11 43,14 43,33 40,36 37,33 37,14" />
-        <polygon class=${on("c")} points="40,44 43,47 43,66 40,69 37,66 37,47" />
-        <polygon class=${on("d")} points="15,70 35,70 38,73 35,76 15,76 12,73" />
-        <polygon class=${on("e")} points="10,44 13,47 13,66 10,69 7,66 7,47" />
-        <polygon class=${on("f")} points="10,11 13,14 13,33 10,36 7,33 7,14" />
-        <polygon class=${on("g")} points="15,37 35,37 38,40 35,43 15,43 12,40" />
-      </svg>
-    `;
+    return digitSvg(ch);
   }
 
   /**
@@ -245,22 +230,6 @@ export class RetroSevenSegment extends RetroControlBase {
     return tokens;
   }
 }
-
-/** Standard 7-segment segment map. Keys are the rendered glyphs. */
-const SEGMENT_MAP: Record<string, string> = {
-  "0": "abcdef",
-  "1": "bc",
-  "2": "abdeg",
-  "3": "abcdg",
-  "4": "bcfg",
-  "5": "acdfg",
-  "6": "acdefg",
-  "7": "abc",
-  "8": "abcdefg",
-  "9": "abcdfg",
-  "-": "g",
-  " ": "",
-};
 
 declare global {
   interface HTMLElementTagNameMap {

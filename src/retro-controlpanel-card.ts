@@ -208,7 +208,10 @@ export class RetroControlPanelCard extends LitElement {
   }
 
   private renderControl(ent: ControlConfig, defaultLabelStyle: LabelStyle) {
-    const labelStyle = ent.label_style ?? defaultLabelStyle;
+    // Label style is always inherited from the panel - there is intentionally
+    // no per-control override (a stale `label_style` left in a control's YAML
+    // is ignored).
+    const labelStyle = defaultLabelStyle;
     switch (ent.type) {
       case "seven_segment":
         return html`<div class="cell">

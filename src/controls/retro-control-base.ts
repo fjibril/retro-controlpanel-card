@@ -58,6 +58,25 @@ export abstract class RetroControlBase extends LitElement {
     return u != null ? String(u) : "";
   }
 
+  /** Current entity state as a finite number, or null. */
+  protected numericState(): number | null {
+    const n = Number(this.stateObj?.state);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  /**
+   * Digit count for a fixed-width value readout, derived from the configured
+   * min/max range (+1 for a sign when min is negative). Clamped to 2..4.
+   */
+  protected valueDigits(): number {
+    const cfg = this.config as { min?: number; max?: number };
+    const min = cfg.min ?? 0;
+    const max = cfg.max ?? 100;
+    const span = Math.max(Math.abs(Math.round(min)), Math.abs(Math.round(max)), 1);
+    const d = String(span).length + (min < 0 ? 1 : 0);
+    return Math.min(4, Math.max(2, d));
+  }
+
   /** Apply user width/height overrides to the host element on each config change. */
   protected applySizeOverrides(): void {
     if (this.config?.width) this.style.setProperty("--cell-w", this.config.width);

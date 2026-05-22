@@ -71,4 +71,20 @@ describe("retro-gauge.needleAngle", () => {
     const majorsWithLabel = ticks.filter((t) => t.major && t.label !== undefined);
     expect(majorsWithLabel.length).toBe(5);
   });
+
+  it("hides the value readout unless show_value is set", async () => {
+    const el = await build({}, "60");
+    toDispose.push(el);
+    expect(el.shadowRoot?.querySelector("retro-mini-segments")).toBeNull();
+  });
+
+  it("computes value + digit count for the readout", async () => {
+    // happy-dom doesn't insert the conditional-child custom element; the actual
+    // rendering is verified in the Playwright suite. Check the inputs here.
+    const el = await build({ show_value: true, min: 0, max: 120 }, "60");
+    toDispose.push(el);
+    const c = el as unknown as { numericState(): number | null; valueDigits(): number };
+    expect(c.numericState()).toBe(60);
+    expect(c.valueDigits()).toBe(3); // max 120 -> 3 digits
+  });
 });

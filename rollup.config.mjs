@@ -16,7 +16,10 @@ export default {
   plugins: [
     resolve({ browser: true }),
     commonjs(),
-    typescript({ tsconfig: "./tsconfig.json", inlineSources: dev }),
+    // Match the TS plugin's sourcemap emission to rollup's output.sourcemap
+    // (tsconfig has sourceMap:true; without this the plugin warns in prod where
+    // rollup's output.sourcemap is false).
+    typescript({ tsconfig: "./tsconfig.json", sourceMap: dev, inlineSources: dev }),
     json(),
     !dev && terser({ format: { comments: false } }),
   ].filter(Boolean),

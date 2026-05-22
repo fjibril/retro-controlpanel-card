@@ -1,4 +1,4 @@
-import { LitElement, html, css, nothing } from "lit";
+import { LitElement, html, css } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { HomeAssistant, LovelaceCardEditor } from "custom-card-helpers";
 import type {
@@ -202,6 +202,14 @@ const SCHEMAS_BY_TYPE: Record<ControlType, FormSchema> = {
         { name: "scale_divisions", selector: { number: { min: 1, max: 10, step: 1, mode: "box" } } },
       ],
     },
+    {
+      type: "grid",
+      name: "",
+      schema: [
+        { name: "show_value", selector: { boolean: {} } },
+        { name: "value_size", selector: { number: { min: 0.3, max: 2, step: 0.05, mode: "box" } } },
+      ],
+    },
     ...ACTION_FIELDS,
   ],
   gauge: [
@@ -223,16 +231,24 @@ const SCHEMAS_BY_TYPE: Record<ControlType, FormSchema> = {
       ],
     },
     { name: "unit", selector: { text: {} } },
+    {
+      type: "grid",
+      name: "",
+      schema: [
+        { name: "show_value", selector: { boolean: {} } },
+        { name: "value_size", selector: { number: { min: 0.3, max: 2, step: 0.05, mode: "box" } } },
+      ],
+    },
     ...ACTION_FIELDS,
   ],
 };
 
 /** Keys that may legally appear on each control type - used to prune stale
-    fields when the user changes a control's type via the form. Width / height
-    / label_style are still allowed in YAML for power-users but the editor no
-    longer surfaces them. */
+    fields when the user changes a control's type via the form. `width`/`height`
+    are still allowed in YAML for power-users; `label_style` is intentionally
+    omitted - label style is always inherited from the panel. */
 const COMMON_KEYS = [
-  "type", "entity", "label", "label_style", "width", "height",
+  "type", "entity", "label", "width", "height",
   "tap_action", "hold_action", "double_tap_action",
 ] as const;
 
@@ -254,11 +270,11 @@ const VALID_KEYS_BY_TYPE: Record<ControlType, ReadonlySet<string>> = {
     ...COMMON_KEYS,
     "min", "max", "segments", "orientation",
     "green_threshold", "yellow_threshold",
-    "show_scale", "scale_divisions",
+    "show_scale", "scale_divisions", "show_value", "value_size",
   ]),
   gauge: new Set([
     ...COMMON_KEYS,
-    "min", "max", "unit", "major_ticks", "minor_ticks",
+    "min", "max", "unit", "major_ticks", "minor_ticks", "show_value", "value_size",
   ]),
 };
 
@@ -562,9 +578,9 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
     }
     // Drop empties so the YAML stays clean.
     if (!next.entity) delete (next as { entity?: string }).entity;
-    if ((next as { label_style?: string }).label_style === "") {
-      delete (next as { label_style?: string }).label_style;
-    }
+    // Per-control label_style is no longer supported (always inherited from the
+    // panel); strip any leftover so editing a control cleans up old configs.
+    delete (next as { label_style?: string }).label_style;
     if ((next as { indicator?: string }).indicator === "") {
       delete (next as { indicator?: string }).indicator;
     }

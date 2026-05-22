@@ -126,6 +126,43 @@ test.describe("retro-controlpanel-card (UI)", () => {
     await expect(nums.last()).toHaveText("100");
   });
 
+  test("vu meter shows a tiny value readout when show_value is set", async ({ page }) => {
+    await page.evaluate(() => (window as any).__retro.setConfig({
+      rows: [{ entities: [
+        { entity: "sensor.signal", type: "vu_meter", min: 0, max: 100, show_value: true },
+      ] }],
+    }));
+    const mini = page.locator("retro-vu-meter").first().locator("retro-mini-segments");
+    await expect(mini).toHaveCount(1);
+    // 3 digit slots for a 0..100 range.
+    await expect(mini.locator(".d")).toHaveCount(3);
+  });
+
+  test("gauge shows a tiny value readout when show_value is set", async ({ page }) => {
+    await page.evaluate(() => (window as any).__retro.setConfig({
+      rows: [{ entities: [
+        { entity: "sensor.speed", type: "gauge", min: 0, max: 120, show_value: true },
+      ] }],
+    }));
+    const mini = page.locator("retro-gauge").first().locator("retro-mini-segments");
+    await expect(mini).toHaveCount(1);
+    await expect(mini.locator(".d")).toHaveCount(3);
+  });
+
+  test("value_size overrides the readout font size", async ({ page }) => {
+    await page.evaluate(() => (window as any).__retro.setConfig({
+      rows: [{ entities: [
+        { entity: "sensor.speed", type: "gauge", min: 0, max: 120, show_value: true, value_size: 1.4 },
+      ] }],
+    }));
+    const fontSize = await page.locator("retro-gauge").first()
+      .locator("retro-mini-segments")
+      .evaluate((el) => getComputedStyle(el).fontSize);
+    // 1.4em relative to the gauge's inherited font-size; just assert it took the
+    // inline override (much larger than the unset ~0.5em default would be).
+    expect(parseFloat(fontSize)).toBeGreaterThan(15);
+  });
+
   test("flip switch shows a status indicator when configured", async ({ page }) => {
     await page.evaluate(() => (window as any).__retro.setConfig({
       rows: [{ entities: [
@@ -135,6 +172,33 @@ test.describe("retro-controlpanel-card (UI)", () => {
     const row = page.locator("retro-flip-switch").first().locator(".row");
     // Indicator on the left = first child of the row.
     await expect(row.locator(".indicator")).toBeVisible();
+  });
+});
+
+// Separate suite: a touch-emulating context so we exercise the real
+// touchend -> synthesized-click sequence that caused the double-toggle on
+// mobile. The default project has no touch, so we make our own context.
+test.describe("retro-controlpanel-card (touch)", () => {
+  test("a single tap toggles the entity exactly once (no flicker)", async ({ browser }) => {
+    const context = await browser.newContext({ hasTouch: true });
+    const page = await context.newPage();
+    try {
+      await page.goto(FIXTURE);
+      await page.waitForFunction(
+        () => !!customElements.get("retro-controlpanel-card") &&
+              !!document.querySelector("retro-controlpanel-card"),
+      );
+      const sw = page.locator("retro-flip-switch").first().locator(".row");
+      await sw.tap();
+      // Wait past the ghost-click window so a stray synthetic click would land.
+      await page.waitForTimeout(900);
+      const toggleCalls = await page.evaluate(() =>
+        (window as any).__retro.calls.filter((c: any) => c.service === "toggle"),
+      );
+      expect(toggleCalls).toHaveLength(1);
+    } finally {
+      await context.close();
+    }
   });
 });
 

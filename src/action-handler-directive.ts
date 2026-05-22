@@ -59,6 +59,8 @@ class RetroActionHandler extends HTMLElement {
   private timer: number | undefined;
   private held = false;
   private dblClickTimer: number | undefined;
+  /** Timestamp of the last touchend, to drop the synthetic click that follows. */
+  private lastTouchEnd = 0;
 
   public bind(element: Element, options: ActionHandlerOptions): void {
     const el = element as ElementWithBinding;
@@ -91,16 +93,23 @@ class RetroActionHandler extends HTMLElement {
 
     const end = (ev: Event) => {
       if (options.disabled) return;
-      // Swallow synthetic click that follows a touchend on mobile.
-      if (
-        ["touchend", "touchcancel"].includes(ev.type) &&
-        this.timer === undefined &&
-        !this.held
-      ) {
-        return;
-      }
+
+      const isTouch = ev.type === "touchend" || ev.type === "touchcancel";
+      // A tap on a touch screen fires touchend AND a synthesized click ~300ms
+      // later. Without this guard both run, firing the action twice (a toggle
+      // ends up back where it started - the "flicker"). Always clear the timer,
+      // but drop the ghost click.
+      const isGhostClick = ev.type === "click" && Date.now() - this.lastTouchEnd < 700;
+
       clearTimeout(this.timer);
       this.timer = undefined;
+
+      if (isGhostClick) return;
+      if (isTouch) {
+        this.lastTouchEnd = Date.now();
+        // Belt-and-suspenders: also ask the browser not to emit the ghost click.
+        if (ev.cancelable) ev.preventDefault();
+      }
 
       if (this.held) {
         this.fire(element, "hold");

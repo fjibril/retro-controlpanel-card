@@ -10,8 +10,6 @@ export interface BaseControlConfig {
   type: ControlType;
   /** Override the friendly_name with a custom label. */
   label?: string;
-  /** Force a label style for this single control. Falls back to card-level. */
-  label_style?: LabelStyle;
   /** CSS width override (e.g. "8em", "120px"). */
   width?: string;
   /** CSS height override. */
@@ -58,6 +56,10 @@ export interface VuMeterConfig extends BaseControlConfig {
   show_scale?: boolean;
   /** Number of labelled divisions on the scale (default 4 → 5 labels). */
   scale_divisions?: number;
+  /** Show a tiny seven-segment readout of the current value. */
+  show_value?: boolean;
+  /** Font-size (in em) of the value readout. Overrides the default size. */
+  value_size?: number;
 }
 
 export interface GaugeConfig extends BaseControlConfig {
@@ -69,6 +71,10 @@ export interface GaugeConfig extends BaseControlConfig {
   major_ticks?: number;
   /** Number of minor (unnumbered) tick marks between each pair of majors. */
   minor_ticks?: number;
+  /** Show a tiny seven-segment readout of the current value. */
+  show_value?: boolean;
+  /** Font-size (in em) of the value readout. Overrides the default size. */
+  value_size?: number;
 }
 
 export interface FlipSwitchConfig extends BaseControlConfig {
