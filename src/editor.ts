@@ -115,6 +115,15 @@ const ACTION_FIELDS: FormSchema = [
   { name: "double_tap_action", selector: { ui_action: {} } },
 ];
 
+/** Status-LED colour picker for the numeric controls (lit when active/heating). */
+const INDICATOR_FIELD = {
+  name: "indicator",
+  selector: { select: { options: [{ value: "", label: "(none)" }, ...GLOW_COLOR_OPTIONS], mode: "dropdown" } },
+};
+
+/** Control types that can read a numeric attribute + show a status LED. */
+const NUMERIC_TYPES = new Set<ControlType>(["seven_segment", "vu_meter", "gauge"]);
+
 const SCHEMAS_BY_TYPE: Record<ControlType, FormSchema> = {
   flip_switch: [
     ...COMMON_ENTITY_FIELDS,
@@ -158,14 +167,9 @@ const SCHEMAS_BY_TYPE: Record<ControlType, FormSchema> = {
         { name: "minimum_fraction_digits", selector: { number: { min: 0, max: 6, step: 1, mode: "box" } } },
       ],
     },
-    {
-      type: "grid",
-      name: "",
-      schema: [
-        { name: "leading_zeros", selector: { boolean: {} } },
-        { name: "unit",          selector: { text: {} } },
-      ],
-    },
+    { name: "unit", selector: { text: {} } },
+    { name: "leading_zeros", selector: { boolean: {} } },
+    INDICATOR_FIELD,
     ...ACTION_FIELDS,
   ],
   vu_meter: [
@@ -210,6 +214,7 @@ const SCHEMAS_BY_TYPE: Record<ControlType, FormSchema> = {
         { name: "value_size", selector: { number: { min: 0.3, max: 2, step: 0.05, mode: "box" } } },
       ],
     },
+    INDICATOR_FIELD,
     ...ACTION_FIELDS,
   ],
   gauge: [
@@ -239,6 +244,7 @@ const SCHEMAS_BY_TYPE: Record<ControlType, FormSchema> = {
         { name: "value_size", selector: { number: { min: 0.3, max: 2, step: 0.05, mode: "box" } } },
       ],
     },
+    INDICATOR_FIELD,
     ...ACTION_FIELDS,
   ],
 };
@@ -264,17 +270,19 @@ const VALID_KEYS_BY_TYPE: Record<ControlType, ReadonlySet<string>> = {
   seven_segment: new Set([
     ...COMMON_KEYS,
     "num_digits", "leading_zeros", "maximum_fraction_digits",
-    "minimum_fraction_digits", "unit", "color",
+    "minimum_fraction_digits", "unit", "color", "attribute", "indicator",
   ]),
   vu_meter: new Set([
     ...COMMON_KEYS,
     "min", "max", "segments", "orientation",
     "green_threshold", "yellow_threshold",
     "show_scale", "scale_divisions", "show_value", "value_size",
+    "attribute", "indicator",
   ]),
   gauge: new Set([
     ...COMMON_KEYS,
     "min", "max", "unit", "major_ticks", "minor_ticks", "show_value", "value_size",
+    "attribute", "indicator",
   ]),
 };
 
@@ -477,7 +485,7 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
   }
 
   private _renderEntity(ent: ControlConfig, ri: number, ei: number, total: number) {
-    const schema = SCHEMAS_BY_TYPE[ent.type] ?? COMMON_ENTITY_FIELDS;
+    const schema = this._entitySchema(ent);
     return html`
       <ha-expansion-panel outlined>
         <div slot="header" class="entity-header">
@@ -519,6 +527,41 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
     `;
   }
 
+  /**
+   * Schema for a control's form. For numeric controls we inject an `attribute`
+   * dropdown listing only the *numeric* attributes of the selected entity (so
+   * a weather/climate entity's temperature/humidity show up, but the
+   * sunny/cloudy condition or heat/off mode don't). Omitted when the entity
+   * has no numeric attributes (plain sensors don't need it).
+   */
+  private _entitySchema(ent: ControlConfig): FormSchema {
+    const base = SCHEMAS_BY_TYPE[ent.type] ?? COMMON_ENTITY_FIELDS;
+    if (!NUMERIC_TYPES.has(ent.type)) return base;
+    const opts = this._numericAttributeOptions(ent.entity);
+    if (opts.length === 0) return base;
+    const attrField = {
+      name: "attribute",
+      selector: {
+        select: { options: [{ value: "", label: "(default value)" }, ...opts], mode: "dropdown" },
+      },
+    };
+    // Insert right after the common type / entity / label rows.
+    const out = [...base];
+    out.splice(COMMON_ENTITY_FIELDS.length, 0, attrField);
+    return out;
+  }
+
+  /** Numeric attributes of an entity, as select options. */
+  private _numericAttributeOptions(entityId?: string): Array<{ value: string; label: string }> {
+    if (!entityId || !this.hass) return [];
+    const st = this.hass.states[entityId];
+    if (!st) return [];
+    const skip = new Set(["supported_features"]);
+    return Object.entries(st.attributes ?? {})
+      .filter(([k, v]) => typeof v === "number" && Number.isFinite(v) && !skip.has(k))
+      .map(([k]) => ({ value: k, label: this._computeLabel({ name: k }) }));
+  }
+
   // -- event handlers -------------------------------------------------------
 
   private _computeLabel = (schema: { name?: string }): string => {
@@ -532,8 +575,17 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
   };
 
   private _computeHelper = (schema: { name?: string }): string => {
+    if (schema?.name === "label") {
+      return "Leave empty to use the entity's name. Type a single space to hide the label entirely.";
+    }
     if (schema?.name === "unit") {
-      return "Leave unset to use the entity's unit of measurement; clear it to show no unit.";
+      return "Leave empty to use the entity's unit of measurement, or type a custom one. Type a single space to show no unit at all.";
+    }
+    if (schema?.name === "attribute") {
+      return "Which numeric attribute to display. Default picks a sensible one (weather→temperature, climate→current temperature).";
+    }
+    if (schema?.name === "indicator") {
+      return "Status LED beside the label - lit when the entity is active (for climate: heating).";
     }
     return "";
   };
@@ -583,6 +635,9 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
     delete (next as { label_style?: string }).label_style;
     if ((next as { indicator?: string }).indicator === "") {
       delete (next as { indicator?: string }).indicator;
+    }
+    if ((next as { attribute?: string }).attribute === "") {
+      delete (next as { attribute?: string }).attribute;
     }
 
     const rows = this._config.rows.map((row, idx) => {

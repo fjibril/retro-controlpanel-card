@@ -2,10 +2,10 @@ import { html, css, svg, nothing } from "lit";
 import { customElement } from "lit/decorators.js";
 import { classMap } from "lit/directives/class-map.js";
 import { RetroControlBase } from "./retro-control-base.js";
-import type { FlipSwitchConfig, GlowColor } from "./../types.js";
+import type { FlipSwitchConfig } from "./../types.js";
 import { actionHandler, hasAction } from "./../action-handler-directive.js";
-import { GLOW_PALETTE } from "./glow-palette.js";
 import "./retro-label.js";
+import "./retro-indicator.js";
 
 /**
  * Top-down view of an industrial bat-handle toggle switch.
@@ -63,36 +63,6 @@ export class RetroFlipSwitch extends RetroControlBase {
     }
     .lever.up   { transform: translateY(-13px); }
     .lever.down { transform: translateY(13px); }
-
-    /* Indicator LED. Dim-but-visible plastic when off, glowing when on. */
-    .indicator {
-      flex: 0 0 auto;
-      width: 0.7em;
-      height: 0.7em;
-      border-radius: 50%;
-      background:
-        radial-gradient(
-          circle at 32% 28%,
-          color-mix(in srgb, var(--ind-color, var(--retro-primary)), white 25%) 0%,
-          var(--ind-color, var(--retro-primary)) 55%,
-          color-mix(in srgb, var(--ind-color, var(--retro-primary)), black 45%) 100%);
-      /* Dim until lit - simulates looking at the coloured plastic of an unlit
-         indicator bulb (you can still see the colour). */
-      filter: brightness(0.35) saturate(0.85);
-      box-shadow:
-        inset 0 0.05em 0.1em rgba(0, 0, 0, 0.4),
-        inset 0 -0.04em 0.06em rgba(255, 255, 255, 0.2),
-        0 0.05em 0.1em rgba(0, 0, 0, 0.5);
-      transition: filter 120ms ease-out, box-shadow 120ms ease-out;
-    }
-    .indicator.on {
-      filter: brightness(1.05) saturate(1);
-      box-shadow:
-        inset 0 0.05em 0.1em rgba(0, 0, 0, 0.25),
-        inset 0 -0.04em 0.06em rgba(255, 255, 255, 0.35),
-        0 0 0.4em var(--ind-color, var(--retro-primary)),
-        0 0 1em var(--ind-soft, var(--retro-primary-dim));
-    }
   `;
 
   private get isOn(): boolean {
@@ -100,16 +70,14 @@ export class RetroFlipSwitch extends RetroControlBase {
     return state === "on" || state === "open" || state === "playing" || state === "home";
   }
 
-  protected updated(changed: Map<string, unknown>): void {
-    super.updated(changed);
-    if (changed.has("config")) this.applyIndicatorColor(this.config?.indicator);
-  }
-
   render() {
     const on = this.isOn;
     const cfg = this.config;
     const indicatorOnLeft = cfg?.indicator && cfg.indicator_position === "left";
     const indicatorOnRight = cfg?.indicator && cfg.indicator_position !== "left";
+    const indicator = cfg?.indicator
+      ? html`<retro-indicator .color=${cfg.indicator} .on=${on}></retro-indicator>`
+      : nothing;
 
     return html`
       <div
@@ -125,27 +93,12 @@ export class RetroFlipSwitch extends RetroControlBase {
           hasDoubleClick: hasAction(cfg?.double_tap_action),
         })}
       >
-        ${indicatorOnLeft ? this.renderIndicator(on) : nothing}
+        ${indicatorOnLeft ? indicator : nothing}
         <div class="switch">${this.renderSwitch(on)}</div>
-        ${indicatorOnRight ? this.renderIndicator(on) : nothing}
+        ${indicatorOnRight ? indicator : nothing}
       </div>
       <retro-label .text=${this.resolvedLabel()} .styleName=${this.labelStyle}></retro-label>
     `;
-  }
-
-  private renderIndicator(on: boolean) {
-    return html`<span class=${classMap({ indicator: true, on })} aria-hidden="true"></span>`;
-  }
-
-  private applyIndicatorColor(color: GlowColor | undefined): void {
-    if (!color) {
-      this.style.removeProperty("--ind-color");
-      this.style.removeProperty("--ind-soft");
-      return;
-    }
-    const p = GLOW_PALETTE[color];
-    this.style.setProperty("--ind-color", p.on);
-    this.style.setProperty("--ind-soft", p.soft);
   }
 
   private renderSwitch(on: boolean) {

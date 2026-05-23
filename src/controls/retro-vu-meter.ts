@@ -5,6 +5,7 @@ import type { VuMeterConfig } from "./../types.js";
 import { actionHandler, hasAction } from "./../action-handler-directive.js";
 import "./retro-label.js";
 import "./retro-mini-segments.js";
+import "./retro-indicator.js";
 
 /**
  * Classic stacked-LED VU meter. Bottom segments are green, top segments are
@@ -83,6 +84,12 @@ export class RetroVuMeter extends RetroControlBase {
 
     /* Etched scale engraved into the panel beside the meter. */
     .scale {
+      /* The meter is padded by 0.35em (host units) on every side, so the
+         segment stack is inset from the meter's outer box. The scale box is the
+         same outer size as the meter, so ticks must be inset by that padding to
+         line up with the segments. The scale font is 0.5em, so 0.35 / 0.5 =
+         0.7em expressed in this element's own em units. */
+      --pad: 0.7em;
       position: relative;
       font-size: 0.5em;
       font-family: var(--retro-label-etched-font);
@@ -90,12 +97,17 @@ export class RetroVuMeter extends RetroControlBase {
       text-shadow: var(--retro-label-etched-shadow);
       letter-spacing: 0.03em;
     }
-    .scale.vertical { width: 2.2em; height: 10em; /* = 5em meter at 2x font */ }
-    .scale.horizontal { width: 10em; height: 2em; }
+    /* Only the main-axis size is fixed; the cross-axis size is left to
+       align-items: stretch on the wrap so the scale fills the meter's full
+       OUTER box (content + 0.35em padding each side). That way 0%-100% spans
+       exactly the box the segment stack lives in, and the --pad inset below
+       lines the ticks up with the segments. */
+    .scale.vertical { width: 2.2em; }
+    .scale.horizontal { height: 2em; }
     .scale-tick { position: absolute; display: flex; align-items: center; }
     .scale.vertical .scale-tick {
       right: 0;
-      bottom: calc(var(--pos) * 100%);
+      bottom: calc(var(--pad) + var(--pos) * (100% - 2 * var(--pad)));
       transform: translateY(50%);
       gap: 0.2em;
     }
@@ -103,7 +115,7 @@ export class RetroVuMeter extends RetroControlBase {
     .scale.vertical .tickline { width: 0.35em; height: 1px; background: currentColor; opacity: 0.65; }
     .scale.horizontal .scale-tick {
       top: 0;
-      left: calc(var(--pos) * 100%);
+      left: calc(var(--pad) + var(--pos) * (100% - 2 * var(--pad)));
       transform: translateX(-50%);
       flex-direction: column-reverse;
       gap: 0.15em;
@@ -114,6 +126,14 @@ export class RetroVuMeter extends RetroControlBase {
     retro-mini-segments {
       font-size: 1.0em;
       margin-top: 0.1em;
+    }
+    .label-row {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35em;
+    }
+    .label-row retro-indicator {
+      font-size: 0.7em;
     }
   `;
 
@@ -157,7 +177,12 @@ export class RetroVuMeter extends RetroControlBase {
             .digits=${this.valueDigits()}
           ></retro-mini-segments>`
         : nothing}
-      <retro-label .text=${this.resolvedLabel()} .styleName=${this.labelStyle}></retro-label>
+      <div class="label-row">
+        ${cfg.indicator
+          ? html`<retro-indicator .color=${cfg.indicator} .on=${this.isIndicatorActive()}></retro-indicator>`
+          : nothing}
+        <retro-label .text=${this.resolvedLabel()} .styleName=${this.labelStyle}></retro-label>
+      </div>
     `;
   }
 
@@ -189,9 +214,8 @@ export class RetroVuMeter extends RetroControlBase {
    */
   calcLitCount(segments: number): number {
     const cfg = this.config;
-    const raw = this.stateObj?.state;
-    const n = Number(raw);
-    if (!Number.isFinite(n)) return 0;
+    const n = this.resolvedValue();
+    if (n === null) return 0;
     const min = cfg.min ?? 0;
     const max = cfg.max ?? 100;
     if (max <= min) return 0;

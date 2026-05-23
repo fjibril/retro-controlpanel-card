@@ -66,26 +66,27 @@ describe("retro-flip-switch", () => {
   it("hides the indicator unless 'indicator' is configured", async () => {
     const { el } = await build("on");
     toDispose.push(el);
-    expect(el.shadowRoot?.querySelector(".indicator")).toBeNull();
+    expect(el.shadowRoot?.querySelector("retro-indicator")).toBeNull();
   });
 
   it("renders an indicator on the right by default", async () => {
     const { el } = await build("on", { indicator: "amber" });
     toDispose.push(el);
-    const ind = el.shadowRoot?.querySelector(".indicator");
+    const ind = el.shadowRoot?.querySelector("retro-indicator");
     expect(ind).not.toBeNull();
-    expect(ind?.classList.contains("on")).toBe(true);
+    // `on` reflects to an attribute on the indicator.
+    expect((ind as any).on).toBe(true);
     // Right means the indicator is the LAST child of .row.
     const row = el.shadowRoot!.querySelector(".row")!;
-    expect(row.lastElementChild?.classList.contains("indicator")).toBe(true);
+    expect(row.lastElementChild?.tagName.toLowerCase()).toBe("retro-indicator");
   });
 
   it("places the indicator on the left when configured", async () => {
     const { el } = await build("off", { indicator: "red", indicator_position: "left" });
     toDispose.push(el);
     const row = el.shadowRoot!.querySelector(".row")!;
-    expect(row.firstElementChild?.classList.contains("indicator")).toBe(true);
-    // Off entity => indicator not in "on" state
-    expect(el.shadowRoot?.querySelector(".indicator.on")).toBeNull();
+    expect(row.firstElementChild?.tagName.toLowerCase()).toBe("retro-indicator");
+    // Off entity => indicator not lit.
+    expect((row.firstElementChild as any).on).toBe(false);
   });
 });

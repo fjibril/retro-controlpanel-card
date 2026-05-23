@@ -6,6 +6,7 @@ import { actionHandler, hasAction } from "./../action-handler-directive.js";
 import { GLOW_PALETTE } from "./glow-palette.js";
 import { digitSvg } from "./segment-shapes.js";
 import "./retro-label.js";
+import "./retro-indicator.js";
 
 /**
  * Classic 7-segment LED display. Renders one SVG per digit, plus optional
@@ -108,6 +109,14 @@ export class RetroSevenSegment extends RetroControlBase {
     svg .seg-off {
       fill: var(--retro-segment-off);
     }
+    .label-row {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35em;
+    }
+    .label-row retro-indicator {
+      font-size: 0.7em;
+    }
   `;
 
   protected updated(changed: Map<string, unknown>): void {
@@ -140,7 +149,12 @@ export class RetroSevenSegment extends RetroControlBase {
         </div>
         ${unit ? html`<span class="unit ${this.labelStyle}">${unit}</span>` : nothing}
       </div>
-      <retro-label .text=${this.resolvedLabel()} .styleName=${this.labelStyle}></retro-label>
+      <div class="label-row">
+        ${cfg.indicator
+          ? html`<retro-indicator .color=${cfg.indicator} .on=${this.isIndicatorActive()}></retro-indicator>`
+          : nothing}
+        <retro-label .text=${this.resolvedLabel()} .styleName=${this.labelStyle}></retro-label>
+      </div>
     `;
   }
 
@@ -177,14 +191,12 @@ export class RetroSevenSegment extends RetroControlBase {
    */
   formatTokens(numDigits: number): string[] {
     const cfg = this.config;
-    const raw = this.stateObj?.state;
     const blank = (): string[] => Array.from({ length: numDigits }, () => "-");
 
-    if (raw === undefined || raw === null || raw === "unavailable" || raw === "unknown") {
-      return blank();
-    }
-    const num = Number(raw);
-    if (!Number.isFinite(num)) return blank();
+    // Attribute-aware: state for plain numerics, the chosen/default attribute
+    // for complex entities (weather, climate, …).
+    const num = this.resolvedValue();
+    if (num === null) return blank();
 
     const minFrac = cfg.minimum_fraction_digits ?? 0;
     const maxFrac = cfg.maximum_fraction_digits ?? 0;

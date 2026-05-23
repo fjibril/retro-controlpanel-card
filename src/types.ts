@@ -8,7 +8,8 @@ export interface BaseControlConfig {
   /** HA entity id; optional only for visual spacers/labels-only controls. */
   entity?: string;
   type: ControlType;
-  /** Override the friendly_name with a custom label. */
+  /** Override the friendly_name with a custom label. Leave unset to inherit the
+   *  friendly_name; set to a single space to hide the label entirely. */
   label?: string;
   /** CSS width override (e.g. "8em", "120px"). */
   width?: string;
@@ -36,10 +37,15 @@ export interface SevenSegmentConfig extends BaseControlConfig {
   leading_zeros?: boolean;
   maximum_fraction_digits?: number;
   minimum_fraction_digits?: number;
-  /** Unit suffix shown beside the digits (etched onto the bezel). */
+  /** Unit suffix shown beside the digits (etched onto the bezel). Leave unset
+   *  to inherit the entity's unit; set to a single space to hide it entirely. */
   unit?: string;
   /** Glow colour of the segments. Defaults to theme primary. */
   color?: GlowColor;
+  /** Numeric attribute to display instead of the state (e.g. for weather/climate). */
+  attribute?: string;
+  /** Status LED beside the label in this colour (lit when the entity is active / heating). */
+  indicator?: GlowColor;
 }
 
 export interface VuMeterConfig extends BaseControlConfig {
@@ -60,12 +66,18 @@ export interface VuMeterConfig extends BaseControlConfig {
   show_value?: boolean;
   /** Font-size (in em) of the value readout. Overrides the default size. */
   value_size?: number;
+  /** Numeric attribute to display instead of the state (e.g. for weather/climate). */
+  attribute?: string;
+  /** Status LED beside the label in this colour (lit when the entity is active / heating). */
+  indicator?: GlowColor;
 }
 
 export interface GaugeConfig extends BaseControlConfig {
   type: "gauge";
   min?: number;
   max?: number;
+  /** Unit suffix shown beside the readout. Leave unset to inherit the entity's
+   *  unit; set to a single space to hide it entirely. */
   unit?: string;
   /** Number of major (numbered) tick marks across the arc. */
   major_ticks?: number;
@@ -75,6 +87,10 @@ export interface GaugeConfig extends BaseControlConfig {
   show_value?: boolean;
   /** Font-size (in em) of the value readout. Overrides the default size. */
   value_size?: number;
+  /** Numeric attribute to display instead of the state (e.g. for weather/climate). */
+  attribute?: string;
+  /** Status LED beside the label in this colour (lit when the entity is active / heating). */
+  indicator?: GlowColor;
 }
 
 export interface FlipSwitchConfig extends BaseControlConfig {

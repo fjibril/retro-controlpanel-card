@@ -105,4 +105,46 @@ describe("retro-seven-segment.formatTokens", () => {
     toDispose.push(el);
     expect(el.shadowRoot?.querySelector(".unit")).toBeNull();
   });
+
+  it("a whitespace-only unit is trimmed away (no stray chip)", async () => {
+    const { el } = await build({ unit: " " }, "21", { unit_of_measurement: "°C" });
+    toDispose.push(el);
+    expect(el.shadowRoot?.querySelector(".unit")).toBeNull();
+  });
+
+});
+
+describe("retro-seven-segment.resolvedLabel", () => {
+  let toDispose: HTMLElement[] = [];
+  afterEach(() => {
+    toDispose.forEach(cleanup);
+    toDispose = [];
+  });
+
+  const labelOf = (el: RetroSevenSegment) =>
+    (el as unknown as { resolvedLabel(): string }).resolvedLabel();
+
+  it("uses a configured label verbatim", async () => {
+    const { el } = await build({ label: "Boiler" }, "21");
+    toDispose.push(el);
+    expect(labelOf(el)).toBe("Boiler");
+  });
+
+  it("falls back to friendly_name when no label is set", async () => {
+    const { el } = await build({}, "21", { friendly_name: "Living Room" });
+    toDispose.push(el);
+    expect(labelOf(el)).toBe("Living Room");
+  });
+
+  it("falls back to the entity id when there is no friendly_name", async () => {
+    const { el } = await build({}, "21");
+    toDispose.push(el);
+    expect(labelOf(el)).toBe("sensor.temp");
+  });
+
+  it("a single space hides the label (same convention as the unit)", async () => {
+    const { el } = await build({ label: " " }, "21", { friendly_name: "Living Room" });
+    toDispose.push(el);
+    expect(labelOf(el)).toBe("");
+  });
 });

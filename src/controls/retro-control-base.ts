@@ -38,7 +38,10 @@ export abstract class RetroControlBase extends LitElement {
   }
 
   protected resolvedLabel(): string {
-    if (this.config.label !== undefined) return this.config.label;
+    // An explicit label wins, but is trimmed so a single space (the editor's
+    // way of saying "hide it" - clearing the field falls back to the default)
+    // collapses to "" and hides the name. Same convention as the unit.
+    if (this.config.label !== undefined) return this.config.label.trim();
     const s = this.stateObj;
     if (s?.attributes?.friendly_name) return String(s.attributes.friendly_name);
     if (this.config.entity) return this.config.entity;
@@ -46,22 +49,112 @@ export abstract class RetroControlBase extends LitElement {
   }
 
   /**
-   * Unit shown beside a value. Pulled from the entity's
-   * `unit_of_measurement` unless the config overrides it. An explicit empty
-   * string (`unit: ""`) is honoured as "show no unit" - only an *absent*
-   * `unit` key falls back to the entity's unit.
+   * Which attribute the numeric value is read from, or null when the value is
+   * the entity state itself. Resolution order:
+   *   1. an explicit `attribute` in the config
+   *   2. null (use the state) when the state is already numeric
+   *   3. a per-domain default for complex entities (weather, climate, …)
    */
-  protected resolvedUnit(): string {
-    const explicit = (this.config as { unit?: string }).unit;
-    if (explicit !== undefined) return explicit;
-    const u = this.stateObj?.attributes?.unit_of_measurement;
-    return u != null ? String(u) : "";
+  protected activeAttribute(): string | null {
+    const explicit = (this.config as { attribute?: string }).attribute;
+    if (explicit) return explicit;
+    const s = this.stateObj;
+    if (s && Number.isFinite(Number(s.state))) return null;
+    const domain = (this.config.entity ?? "").split(".")[0];
+    return DOMAIN_DEFAULT_ATTR[domain] ?? null;
   }
 
-  /** Current entity state as a finite number, or null. */
-  protected numericState(): number | null {
-    const n = Number(this.stateObj?.state);
+  /**
+   * Numeric value to display: the chosen attribute if any, otherwise the
+   * state. Returns null when not a finite number (unavailable, missing, etc.).
+   */
+  protected resolvedValue(): number | null {
+    const s = this.stateObj;
+    if (!s) return null;
+    const attr = this.activeAttribute();
+    const raw = attr ? s.attributes?.[attr] : s.state;
+    const n = Number(raw);
     return Number.isFinite(n) ? n : null;
+  }
+
+  /**
+   * Unit shown beside a value. An explicit `unit` config always wins. A single
+   * space (or any whitespace) trims to "" and hides the unit, while clearing
+   * the field entirely falls back to the entity's unit. Otherwise: when reading
+   * the state, use the entity's `unit_of_measurement`; when reading an
+   * attribute, infer a unit for the well-known weather/climate/cover/… attrs.
+   */
+  protected resolvedUnit(): string {
+    const cfg = this.config as { unit?: string };
+    // Trim so a stray space doesn't render an empty unit chip; an explicit
+    // empty/whitespace string therefore also means "no unit".
+    if (cfg.unit !== undefined) return cfg.unit.trim();
+    const s = this.stateObj;
+    if (!s) return "";
+    const attr = this.activeAttribute();
+    if (!attr) {
+      const u = s.attributes?.unit_of_measurement;
+      return u != null ? String(u) : "";
+    }
+    return this.inferAttributeUnit(attr, s);
+  }
+
+  /** Best-effort unit for a known numeric attribute. */
+  private inferAttributeUnit(attr: string, s: HassEntity): string {
+    const a = s.attributes ?? {};
+    const sysTemp = (this.hass?.config as { unit_system?: { temperature?: string } } | undefined)
+      ?.unit_system?.temperature;
+    const tempUnit = () => String(a.temperature_unit ?? sysTemp ?? "");
+    switch (attr) {
+      case "temperature":
+      case "current_temperature":
+      case "apparent_temperature":
+      case "dew_point":
+      case "target_temp_high":
+      case "target_temp_low":
+        return tempUnit();
+      case "humidity":
+      case "current_humidity":
+      case "percentage":
+      case "current_position":
+      case "current_tilt_position":
+      case "battery_level":
+      case "cloud_coverage":
+      case "uv_index":
+        return attr === "uv_index" ? "" : "%";
+      case "pressure":
+        return String(a.pressure_unit ?? "");
+      case "wind_speed":
+      case "wind_gust_speed":
+        return String(a.wind_speed_unit ?? "");
+      case "visibility":
+        return String(a.visibility_unit ?? "");
+      default:
+        return "";
+    }
+  }
+
+  /**
+   * Whether a status indicator LED should be lit. For climate this tracks
+   * `hvac_action` (heating/cooling/… = active, idle/off = not); otherwise it's
+   * the usual on-ish states.
+   */
+  protected isIndicatorActive(): boolean {
+    const s = this.stateObj;
+    if (!s) return false;
+    if ((this.config.entity ?? "").startsWith("climate.")) {
+      const action = s.attributes?.hvac_action;
+      if (action != null) {
+        return ["heating", "cooling", "drying", "fan"].includes(String(action));
+      }
+      return s.state !== "off" && s.state !== "unavailable" && s.state !== "unknown";
+    }
+    return ["on", "open", "playing", "home", "active", "heat", "cool", "auto"].includes(s.state);
+  }
+
+  /** Current entity value as a finite number (attribute-aware), or null. */
+  protected numericState(): number | null {
+    return this.resolvedValue();
   }
 
   /**
@@ -187,3 +280,21 @@ export abstract class RetroControlBase extends LitElement {
     );
   }
 }
+
+/**
+ * For complex entities whose state is categorical, the numeric value to show
+ * by default comes from one of these attributes. Used when no explicit
+ * `attribute` is configured and the state itself isn't numeric.
+ */
+const DOMAIN_DEFAULT_ATTR: Record<string, string> = {
+  weather: "temperature",
+  climate: "current_temperature",
+  water_heater: "current_temperature",
+  humidifier: "current_humidity",
+  cover: "current_position",
+  fan: "percentage",
+  light: "brightness",
+  media_player: "volume_level",
+  vacuum: "battery_level",
+  sun: "elevation",
+};

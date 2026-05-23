@@ -5,6 +5,7 @@ import type { GaugeConfig } from "./../types.js";
 import { actionHandler, hasAction } from "./../action-handler-directive.js";
 import "./retro-label.js";
 import "./retro-mini-segments.js";
+import "./retro-indicator.js";
 
 /**
  * Semicircular analog gauge with sweeping needle, painted scale and tick
@@ -106,6 +107,15 @@ export class RetroGauge extends RetroControlBase {
       font-size: 1.0em;
       z-index: 3;
     }
+    /* Label with an optional status LED in front of it. */
+    .label-row {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35em;
+    }
+    .label-row retro-indicator {
+      font-size: 0.7em;
+    }
   `;
 
   render() {
@@ -180,16 +190,20 @@ export class RetroGauge extends RetroControlBase {
               .digits=${this.valueDigits()}
             ></retro-mini-segments>`
           : nothing}
-      <retro-label .text=${this.resolvedLabel()} .styleName=${this.labelStyle}></retro-label>
+      <div class="label-row">
+        ${cfg.indicator
+          ? html`<retro-indicator .color=${cfg.indicator} .on=${this.isIndicatorActive()}></retro-indicator>`
+          : nothing}
+        <retro-label .text=${this.resolvedLabel()} .styleName=${this.labelStyle}></retro-label>
+      </div>
     `;
   }
 
   /** Map the entity value to a needle rotation in degrees (-90 = min, +90 = max). */
   needleAngle(): number | undefined {
     const cfg = this.config;
-    const raw = this.stateObj?.state;
-    const n = Number(raw);
-    if (!Number.isFinite(n)) return undefined;
+    const n = this.resolvedValue();
+    if (n === null) return undefined;
     const min = cfg.min ?? 0;
     const max = cfg.max ?? 100;
     if (max <= min) return 0;

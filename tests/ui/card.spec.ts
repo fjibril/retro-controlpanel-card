@@ -163,6 +163,27 @@ test.describe("retro-controlpanel-card (UI)", () => {
     expect(parseFloat(fontSize)).toBeGreaterThan(15);
   });
 
+  test("gauge reads a climate attribute and lights the heating indicator", async ({ page }) => {
+    await page.evaluate(() => {
+      const w = window as any;
+      w.__retro.states["climate.valve"] = {
+        entity_id: "climate.valve",
+        state: "heat",
+        attributes: { current_temperature: 19.5, hvac_action: "heating", friendly_name: "Valve" },
+      };
+      w.__retro.setConfig({ rows: [{ entities: [
+        { entity: "climate.valve", type: "gauge", min: 0, max: 30, show_value: true, indicator: "red" },
+      ] }] });
+      w.__retro.renderHass();
+    });
+    const gauge = page.locator("retro-gauge").first();
+    const ind = gauge.locator("retro-indicator");
+    await expect(ind).toHaveCount(1);
+    await expect(ind).toHaveJSProperty("on", true); // hvac_action = heating
+    // The value readout renders (current_temperature 19.5 -> rounded by the mini).
+    await expect(gauge.locator("retro-mini-segments")).toHaveCount(1);
+  });
+
   test("flip switch shows a status indicator when configured", async ({ page }) => {
     await page.evaluate(() => (window as any).__retro.setConfig({
       rows: [{ entities: [
@@ -171,7 +192,7 @@ test.describe("retro-controlpanel-card (UI)", () => {
     }));
     const row = page.locator("retro-flip-switch").first().locator(".row");
     // Indicator on the left = first child of the row.
-    await expect(row.locator(".indicator")).toBeVisible();
+    await expect(row.locator("retro-indicator")).toBeVisible();
   });
 });
 
