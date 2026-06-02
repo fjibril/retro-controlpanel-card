@@ -1,4 +1,4 @@
-export const CARD_VERSION = "0.1.1";
+export const CARD_VERSION = "0.2.0";
 export const CARD_TAG = "retro-controlpanel-card";
 export const CARD_TYPE = `custom:${CARD_TAG}`;
 export const CARD_NAME = "Retro Control Panel";
