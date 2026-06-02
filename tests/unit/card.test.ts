@@ -103,6 +103,64 @@ describe("retro-controlpanel-card rendering", () => {
     expect(sw.config.entity).toBe("input_boolean.toggle");
   });
 
+  it("does not wrap rows in a .row-group when group_style is unset", async () => {
+    const { el } = await buildCard();
+    toDispose.push(el);
+    expect(el.shadowRoot?.querySelector(".row-group")).toBeNull();
+  });
+
+  it("wraps a row in .row-group.group-embossed when group_style is 'embossed'", async () => {
+    const hass = makeHass({ "input_boolean.toggle": { state: "on" } });
+    const el = await mount<RetroControlPanelCard>("retro-controlpanel-card", (n) => {
+      n.setConfig({
+        ...sampleConfig,
+        rows: [{ group_style: "embossed", entities: [{ type: "flip_switch", entity: "input_boolean.toggle" }] }],
+      });
+      n.hass = hass;
+    });
+    toDispose.push(el);
+    await el.updateComplete;
+    const group = el.shadowRoot?.querySelector(".row-group");
+    expect(group).not.toBeNull();
+    expect(group?.classList.contains("group-embossed")).toBe(true);
+    // No decorations on the embossed style.
+    expect(group?.querySelector(".screw")).toBeNull();
+    expect(group?.querySelector(".bracket")).toBeNull();
+  });
+
+  it("wraps a 'screwed' row in .row-group.group-screwed", async () => {
+    const hass = makeHass({ "input_boolean.toggle": { state: "on" } });
+    const el = await mount<RetroControlPanelCard>("retro-controlpanel-card", (n) => {
+      n.setConfig({
+        ...sampleConfig,
+        rows: [{ group_style: "screwed", entities: [{ type: "flip_switch", entity: "input_boolean.toggle" }] }],
+      });
+      n.hass = hass;
+    });
+    toDispose.push(el);
+    await el.updateComplete;
+    expect(el.shadowRoot?.querySelector(".row-group.group-screwed")).not.toBeNull();
+    // The corner screws live inside a conditional child-part - happy-dom does
+    // not reliably insert those, so the actual screws are verified visually
+    // by the Playwright suite.
+  });
+
+  it("wraps a 'stencil' row in .row-group.group-stencil", async () => {
+    const hass = makeHass({ "input_boolean.toggle": { state: "on" } });
+    const el = await mount<RetroControlPanelCard>("retro-controlpanel-card", (n) => {
+      n.setConfig({
+        ...sampleConfig,
+        rows: [{ group_style: "stencil", entities: [{ type: "flip_switch", entity: "input_boolean.toggle" }] }],
+      });
+      n.hass = hass;
+    });
+    toDispose.push(el);
+    await el.updateComplete;
+    expect(el.shadowRoot?.querySelector(".row-group.group-stencil")).not.toBeNull();
+    // Same conditional-child-part caveat as the 'screwed' case applies to the
+    // corner brackets; their presence is verified in the Playwright suite.
+  });
+
   it("applies scale via CSS custom property when configured", async () => {
     const hass = makeHass({});
     const el = await mount<RetroControlPanelCard>("retro-controlpanel-card", (n) => {

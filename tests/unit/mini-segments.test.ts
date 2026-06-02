@@ -42,4 +42,37 @@ describe("retro-mini-segments", () => {
     toDispose.push(el);
     expect(el.shadowRoot?.querySelectorAll(".win .d").length).toBe(3);
   });
+
+  it("does not set a colour override when color is unset", async () => {
+    const el = await mount<RetroMiniSegments>("retro-mini-segments", (n) => {
+      n.value = 42;
+      n.digits = 3;
+    });
+    toDispose.push(el);
+    expect(el.style.getPropertyValue("--retro-segment-on")).toBe("");
+  });
+
+  it("applies a glow colour override when color is set", async () => {
+    const el = await mount<RetroMiniSegments>("retro-mini-segments", (n) => {
+      n.value = 42;
+      n.digits = 3;
+      n.color = "red";
+    });
+    toDispose.push(el);
+    expect(el.style.getPropertyValue("--retro-segment-on")).not.toBe("");
+    expect(el.style.getPropertyValue("--retro-segment-glow")).not.toBe("");
+  });
+
+  it("removes the colour override when color is cleared", async () => {
+    const el = await mount<RetroMiniSegments>("retro-mini-segments", (n) => {
+      n.value = 42;
+      n.digits = 3;
+      n.color = "green";
+    });
+    toDispose.push(el);
+    expect(el.style.getPropertyValue("--retro-segment-on")).not.toBe("");
+    el.color = undefined;
+    await el.updateComplete;
+    expect(el.style.getPropertyValue("--retro-segment-on")).toBe("");
+  });
 });

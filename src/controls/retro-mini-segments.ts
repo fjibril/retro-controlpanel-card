@@ -1,5 +1,7 @@
 import { LitElement, html, css } from "lit";
 import { customElement, property } from "lit/decorators.js";
+import type { GlowColor } from "../types.js";
+import { GLOW_PALETTE } from "./glow-palette.js";
 import { digitSvg, integerTokens } from "./segment-shapes.js";
 
 /**
@@ -14,6 +16,22 @@ export class RetroMiniSegments extends LitElement {
   @property({ attribute: false }) value: number | null = null;
   /** Number of digit slots. */
   @property({ type: Number }) digits = 3;
+  /** Optional glow colour override. Unset → inherit the theme's segment colour. */
+  @property({ attribute: false }) color?: GlowColor;
+
+  protected updated(changed: Map<string, unknown>): void {
+    if (!changed.has("color")) return;
+    if (!this.color) {
+      this.style.removeProperty("--retro-segment-on");
+      this.style.removeProperty("--retro-segment-off");
+      this.style.removeProperty("--retro-segment-glow");
+      return;
+    }
+    const p = GLOW_PALETTE[this.color] ?? GLOW_PALETTE.amber;
+    this.style.setProperty("--retro-segment-on", p.on);
+    this.style.setProperty("--retro-segment-off", p.off);
+    this.style.setProperty("--retro-segment-glow", `0 0 0.18em ${p.on}`);
+  }
 
   static styles = css`
     :host {

@@ -62,6 +62,13 @@ const ORIENTATION_OPTIONS = [
   { value: "horizontal", label: "Horizontal" },
 ];
 
+const GROUP_STYLE_OPTIONS = [
+  { value: "none",     label: "None" },
+  { value: "embossed", label: "Embossed bezel" },
+  { value: "screwed",  label: "Screwed sub-panel" },
+  { value: "stencil",  label: "Stencil corners" },
+];
+
 // ---- schemas --------------------------------------------------------------
 // `ha-form` accepts loosely-typed selector schemas; we use `any[]` here
 // because the HA frontend's exact schema shape is not in custom-card-helpers.
@@ -92,7 +99,14 @@ const CARD_SCHEMA: FormSchema = [
 ];
 
 const ROW_SCHEMA: FormSchema = [
-  { name: "justify", selector: { select: { options: JUSTIFY_OPTIONS, mode: "dropdown" } } },
+  {
+    type: "grid",
+    name: "",
+    schema: [
+      { name: "justify",     selector: { select: { options: JUSTIFY_OPTIONS, mode: "dropdown" } } },
+      { name: "group_style", selector: { select: { options: GROUP_STYLE_OPTIONS, mode: "dropdown" } } },
+    ],
+  },
 ];
 
 const COMMON_ENTITY_FIELDS: FormSchema = [
@@ -119,6 +133,12 @@ const ACTION_FIELDS: FormSchema = [
 const INDICATOR_FIELD = {
   name: "indicator",
   selector: { select: { options: [{ value: "", label: "(none)" }, ...GLOW_COLOR_OPTIONS], mode: "dropdown" } },
+};
+
+/** Glow-colour picker for the tiny value LCD on VU meter / gauge. */
+const VALUE_COLOR_FIELD = {
+  name: "value_color",
+  selector: { select: { options: [{ value: "", label: "(theme default)" }, ...GLOW_COLOR_OPTIONS], mode: "dropdown" } },
 };
 
 /** Control types that can read a numeric attribute + show a status LED. */
@@ -214,6 +234,7 @@ const SCHEMAS_BY_TYPE: Record<ControlType, FormSchema> = {
         { name: "value_size", selector: { number: { min: 0.3, max: 2, step: 0.05, mode: "box" } } },
       ],
     },
+    VALUE_COLOR_FIELD,
     INDICATOR_FIELD,
     ...ACTION_FIELDS,
   ],
@@ -244,6 +265,7 @@ const SCHEMAS_BY_TYPE: Record<ControlType, FormSchema> = {
         { name: "value_size", selector: { number: { min: 0.3, max: 2, step: 0.05, mode: "box" } } },
       ],
     },
+    VALUE_COLOR_FIELD,
     INDICATOR_FIELD,
     ...ACTION_FIELDS,
   ],
@@ -276,12 +298,13 @@ const VALID_KEYS_BY_TYPE: Record<ControlType, ReadonlySet<string>> = {
     ...COMMON_KEYS,
     "min", "max", "segments", "orientation",
     "green_threshold", "yellow_threshold",
-    "show_scale", "scale_divisions", "show_value", "value_size",
+    "show_scale", "scale_divisions", "show_value", "value_size", "value_color",
     "attribute", "indicator",
   ]),
   gauge: new Set([
     ...COMMON_KEYS,
-    "min", "max", "unit", "major_ticks", "minor_ticks", "show_value", "value_size",
+    "min", "max", "unit", "major_ticks", "minor_ticks",
+    "show_value", "value_size", "value_color",
     "attribute", "indicator",
   ]),
 };
@@ -430,7 +453,10 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
 
   private _renderRow(row: RowConfig, ri: number) {
     const total = this._config!.rows.length;
-    const rowData = { justify: row.justify ?? "center" };
+    const rowData = {
+      justify: row.justify ?? "center",
+      group_style: row.group_style ?? "none",
+    };
     return html`
       <ha-expansion-panel outlined>
         <div slot="header" class="row-header">
@@ -581,11 +607,17 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
     if (schema?.name === "unit") {
       return "Leave empty to use the entity's unit of measurement, or type a custom one. Type a single space to show no unit at all.";
     }
+    if (schema?.name === "group_style") {
+      return "Decorative frame around this row's controls. Embossed = raised bezel; screwed = sub-panel with corner screws; stencil = painted L-brackets at the corners.";
+    }
     if (schema?.name === "attribute") {
       return "Which numeric attribute to display. Default picks a sensible one (weather→temperature, climate→current temperature).";
     }
     if (schema?.name === "indicator") {
       return "Status LED beside the label - lit when the entity is active (for climate: heating).";
+    }
+    if (schema?.name === "value_color") {
+      return "Glow colour of the small value readout (only shown when 'Show value' is on).";
     }
     return "";
   };
@@ -607,8 +639,9 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
     const rows = this._config.rows.map((row, idx) => {
       if (idx !== ri) return row;
       const merged = { ...row, ...incoming } as RowConfig;
-      // Drop the "center" justify - that's the implicit default.
+      // Drop the implicit defaults so the YAML stays clean.
       if (merged.justify === "center") delete (merged as Partial<RowConfig>).justify;
+      if (merged.group_style === "none") delete (merged as Partial<RowConfig>).group_style;
       return merged;
     });
     this._fireConfigChanged({ ...this._config, rows });
@@ -638,6 +671,9 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
     }
     if ((next as { attribute?: string }).attribute === "") {
       delete (next as { attribute?: string }).attribute;
+    }
+    if ((next as { value_color?: string }).value_color === "") {
+      delete (next as { value_color?: string }).value_color;
     }
 
     const rows = this._config.rows.map((row, idx) => {

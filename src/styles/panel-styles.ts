@@ -124,6 +124,99 @@ export const panelStyles = css`
     flex: 0 0 auto;
   }
 
+  /* ---- Row grouping frames ----
+     A row-group wraps the row's cells in a decorative frame. .group-inner
+     re-creates the same flex layout the .row would otherwise have so the cells
+     lay out identically inside the frame. */
+  .row-group {
+    position: relative;
+    display: inline-flex;
+    border-radius: 0.4em;
+  }
+  .group-inner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 0.9em;
+  }
+
+  /* Embossed: a continuous etched line scribed into the faceplate, like the
+     engraved labels - same colour and shadow treatment, just drawn as a
+     rounded rectangle outline. No fill, no recess - the panel surface shows
+     through unchanged inside the frame. */
+  .row-group.group-embossed {
+    padding: 0.55em 0.85em;
+    border: 1px solid var(--retro-label-etched-color);
+    border-radius: 0.5em;
+    /* Same dark-below / light-above stroke pair the engraved labels use to
+       sell their "cut into the metal" look. */
+    box-shadow: var(--retro-label-etched-shadow);
+  }
+
+  /* Screwed: a separate metal plate bolted on TOP of the panel. Uses the
+     lighter bezel finish so it reads as a different piece of metal, with a
+     bright lit top edge, a dark bottom edge, and a real drop shadow falling
+     onto the panel below. Corner screws hold it in place. */
+  .row-group.group-screwed {
+    padding: 0.9em 1.15em;
+    background-color: var(--retro-panel-bezel);
+    background-image:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(0, 0, 0, 0.1));
+    border-radius: 0.3em;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.22),
+      inset 0 -1px 0 rgba(0, 0, 0, 0.45),
+      0 0.07em 0.14em rgba(0, 0, 0, 0.5),
+      0 0.2em 0.5em rgba(0, 0, 0, 0.55);
+  }
+  /* Screws are smaller than the panel screws and pinned tightly to the corners. */
+  .row-group.group-screwed .screw {
+    width: 0.55em;
+    height: 0.55em;
+  }
+  .row-group.group-screwed .screw.tl { top: 0.14em;    left: 0.14em; }
+  .row-group.group-screwed .screw.tr { top: 0.14em;    right: 0.14em; }
+  .row-group.group-screwed .screw.bl { bottom: 0.14em; left: 0.14em; }
+  .row-group.group-screwed .screw.br { bottom: 0.14em; right: 0.14em; }
+
+  /* Stencil: spray-painted L-brackets, no continuous border. */
+  .row-group.group-stencil {
+    padding: 0.55em 0.7em;
+  }
+  .row-group.group-stencil .bracket {
+    position: absolute;
+    width: 0.75em;
+    height: 0.75em;
+    border: 0 solid var(--retro-label-etched-color);
+    opacity: 0.85;
+    pointer-events: none;
+    /* Soft halo so the brackets read as paint, not crisp ink. */
+    filter:
+      drop-shadow(0 0 0.06em rgba(255, 255, 255, 0.08))
+      drop-shadow(0 0.04em 0.08em rgba(0, 0, 0, 0.45));
+  }
+  .row-group.group-stencil .bracket.tl {
+    top: 0; left: 0;
+    border-top-width: 0.14em; border-left-width: 0.14em;
+    border-top-left-radius: 0.1em;
+  }
+  .row-group.group-stencil .bracket.tr {
+    top: 0; right: 0;
+    border-top-width: 0.14em; border-right-width: 0.14em;
+    border-top-right-radius: 0.1em;
+  }
+  .row-group.group-stencil .bracket.bl {
+    bottom: 0; left: 0;
+    border-bottom-width: 0.14em; border-left-width: 0.14em;
+    border-bottom-left-radius: 0.1em;
+  }
+  .row-group.group-stencil .bracket.br {
+    bottom: 0; right: 0;
+    border-bottom-width: 0.14em; border-right-width: 0.14em;
+    border-bottom-right-radius: 0.1em;
+  }
+
   .error {
     padding: 1em;
     color: #ff6b6b;

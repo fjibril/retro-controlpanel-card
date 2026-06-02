@@ -200,9 +200,38 @@ export class RetroControlPanelCard extends LitElement {
 
   private renderRow(row: RowConfig, defaultLabelStyle: LabelStyle) {
     const justify = row.justify ?? "center";
+    const group = row.group_style ?? "none";
+    const cells = row.entities.map((ent) => this.renderControl(ent, defaultLabelStyle));
+    // No frame: cells are direct flex children of .row (original layout).
+    if (group === "none") {
+      return html`
+        <div class="row" style="--row-justify: ${justify};">${cells}</div>
+      `;
+    }
+    // Framed: wrap cells in a .row-group. The frame's decorations (screws /
+    // brackets) sit absolutely inside the group; .group-inner re-creates the
+    // same flex layout the .row would have had so cells lay out identically.
     return html`
       <div class="row" style="--row-justify: ${justify};">
-        ${row.entities.map((ent) => this.renderControl(ent, defaultLabelStyle))}
+        <div class="row-group group-${group}" part="row-group">
+          ${group === "screwed"
+            ? html`
+                ${this.renderScrew("tl", 24)}
+                ${this.renderScrew("tr", -52)}
+                ${this.renderScrew("bl", 68)}
+                ${this.renderScrew("br", -14)}
+              `
+            : nothing}
+          ${group === "stencil"
+            ? html`
+                <span class="bracket tl"></span>
+                <span class="bracket tr"></span>
+                <span class="bracket bl"></span>
+                <span class="bracket br"></span>
+              `
+            : nothing}
+          <div class="group-inner">${cells}</div>
+        </div>
       </div>
     `;
   }

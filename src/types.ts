@@ -3,6 +3,14 @@ import type { HomeAssistant, LovelaceCardConfig } from "custom-card-helpers";
 export type ThemeName = "amber" | "green" | "red" | "aluminium";
 export type LabelStyle = "etched" | "dymo" | "none";
 export type GlowColor = "amber" | "green" | "red" | "white" | "blue";
+/**
+ * Decorative frame drawn around a row's controls, grouping them visually.
+ *  - `none`     : no frame (default)
+ *  - `embossed` : raised metal bezel around the group (continuous border)
+ *  - `screwed`  : sub-panel pressed into the row with four corner screws
+ *  - `stencil`  : painted L-shaped brackets at the four corners only
+ */
+export type RowGroupStyle = "none" | "embossed" | "screwed" | "stencil";
 
 export interface BaseControlConfig {
   /** HA entity id; optional only for visual spacers/labels-only controls. */
@@ -66,6 +74,8 @@ export interface VuMeterConfig extends BaseControlConfig {
   show_value?: boolean;
   /** Font-size (in em) of the value readout. Overrides the default size. */
   value_size?: number;
+  /** Glow colour of the value readout. Defaults to theme primary. */
+  value_color?: GlowColor;
   /** Numeric attribute to display instead of the state (e.g. for weather/climate). */
   attribute?: string;
   /** Status LED beside the label in this colour (lit when the entity is active / heating). */
@@ -87,6 +97,8 @@ export interface GaugeConfig extends BaseControlConfig {
   show_value?: boolean;
   /** Font-size (in em) of the value readout. Overrides the default size. */
   value_size?: number;
+  /** Glow colour of the value readout. Defaults to theme primary. */
+  value_color?: GlowColor;
   /** Numeric attribute to display instead of the state (e.g. for weather/climate). */
   attribute?: string;
   /** Status LED beside the label in this colour (lit when the entity is active / heating). */
@@ -122,6 +134,8 @@ export interface RowConfig {
   entities: ControlConfig[];
   /** Optional CSS justify-content override for this row. */
   justify?: "start" | "center" | "end" | "space-between" | "space-around";
+  /** Decorative frame around this row's controls. Defaults to "none". */
+  group_style?: RowGroupStyle;
 }
 
 export interface RetroControlPanelCardConfig extends LovelaceCardConfig {

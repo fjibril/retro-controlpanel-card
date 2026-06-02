@@ -188,6 +188,7 @@ export class RetroGauge extends RetroControlBase {
               style=${cfg.value_size ? `font-size:${cfg.value_size}em` : nothing}
               .value=${this.numericState()}
               .digits=${this.valueDigits()}
+              .color=${cfg.value_color}
             ></retro-mini-segments>`
           : nothing}
       <div class="label-row">
