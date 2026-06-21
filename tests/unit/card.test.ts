@@ -161,6 +161,95 @@ describe("retro-controlpanel-card rendering", () => {
     // corner brackets; their presence is verified in the Playwright suite.
   });
 
+  it("wraps a row in .row-group when a label is set without a frame", async () => {
+    const hass = makeHass({ "input_boolean.toggle": { state: "on" } });
+    const el = await mount<RetroControlPanelCard>("retro-controlpanel-card", (n) => {
+      n.setConfig({
+        ...sampleConfig,
+        rows: [{ label: "ROW TITLE", entities: [{ type: "flip_switch", entity: "input_boolean.toggle" }] }],
+      });
+      n.hass = hass;
+    });
+    toDispose.push(el);
+    await el.updateComplete;
+    const group = el.shadowRoot?.querySelector(".row-group");
+    expect(group).not.toBeNull();
+    expect(group?.classList.contains("group-none")).toBe(true);
+    // The label-bearing wrapper holds a .group-label retro-label.
+    expect(group?.querySelector("retro-label.group-label")).not.toBeNull();
+  });
+
+  it("a single-space row label hides the label entirely", async () => {
+    const hass = makeHass({ "input_boolean.toggle": { state: "on" } });
+    const el = await mount<RetroControlPanelCard>("retro-controlpanel-card", (n) => {
+      n.setConfig({
+        ...sampleConfig,
+        rows: [{ label: " ", entities: [{ type: "flip_switch", entity: "input_boolean.toggle" }] }],
+      });
+      n.hass = hass;
+    });
+    toDispose.push(el);
+    await el.updateComplete;
+    // No frame, no label - row should be bare (no .row-group wrapper).
+    expect(el.shadowRoot?.querySelector(".row-group")).toBeNull();
+  });
+
+  it("renders a group entity as a nested .row-group with its own controls", async () => {
+    const hass = makeHass({
+      "input_boolean.toggle": { state: "on" },
+      "input_button.fire": { state: "unknown" },
+    });
+    const el = await mount<RetroControlPanelCard>("retro-controlpanel-card", (n) => {
+      n.setConfig({
+        ...sampleConfig,
+        rows: [
+          {
+            group_style: "screwed",
+            label: "OUTER",
+            entities: [
+              {
+                type: "group",
+                group_style: "embossed",
+                label: "INNER",
+                entities: [
+                  { type: "flip_switch", entity: "input_boolean.toggle" },
+                  { type: "button", entity: "input_button.fire", text: "FIRE" },
+                ],
+              },
+            ],
+          },
+        ],
+      });
+      n.hass = hass;
+    });
+    toDispose.push(el);
+    await el.updateComplete;
+    // Outer screwed wrapper, inner embossed wrapper, both flip-switch + button rendered.
+    expect(el.shadowRoot?.querySelector(".row-group.group-screwed")).not.toBeNull();
+    expect(el.shadowRoot?.querySelector(".row-group.group-embossed")).not.toBeNull();
+    expect(el.shadowRoot?.querySelector("retro-flip-switch")).not.toBeNull();
+    expect(el.shadowRoot?.querySelector("retro-button")).not.toBeNull();
+  });
+
+  it("setConfig rejects a group entity without an entities array", async () => {
+    const hass = makeHass({});
+    const el = document.createElement("retro-controlpanel-card") as RetroControlPanelCard;
+    toDispose.push(el);
+    expect(() =>
+      el.setConfig({
+        ...sampleConfig,
+        rows: [
+          {
+            entities: [
+              // Missing the required entities[] on the group.
+              { type: "group", label: "BAD" } as never,
+            ],
+          },
+        ],
+      }),
+    ).toThrow(/group must have an 'entities' array/);
+  });
+
   it("applies scale via CSS custom property when configured", async () => {
     const hass = makeHass({});
     const el = await mount<RetroControlPanelCard>("retro-controlpanel-card", (n) => {

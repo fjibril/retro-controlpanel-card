@@ -125,12 +125,15 @@ export const panelStyles = css`
   }
 
   /* ---- Row grouping frames ----
-     A row-group wraps the row's cells in a decorative frame. .group-inner
-     re-creates the same flex layout the .row would otherwise have so the cells
-     lay out identically inside the frame. */
+     A row-group wraps a row's (or nested group's) cells in a decorative frame
+     and/or a title label. The wrapper is column-flex so an optional label sits
+     above the cells; .group-inner re-creates the same horizontal flex layout
+     the bare .row would have had so cells lay out identically inside. */
   .row-group {
     position: relative;
     display: inline-flex;
+    flex-direction: column;
+    align-items: center;
     border-radius: 0.4em;
   }
   .group-inner {
@@ -139,6 +142,13 @@ export const panelStyles = css`
     align-items: flex-end;
     justify-content: center;
     gap: 0.9em;
+  }
+  /* Cluster title sits at the top of the frame (or just above the controls
+     when the cluster is unframed - .group-none has no border/fill, so the
+     label simply floats above the cells). */
+  .row-group > .group-label {
+    margin-bottom: 0.4em;
+    font-size: 0.95em;
   }
 
   /* Embossed: a continuous etched line scribed into the faceplate, like the

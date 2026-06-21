@@ -1,9 +1,10 @@
-import { LitElement, html, css } from "lit";
+import { LitElement, html, css, nothing, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { HomeAssistant, LovelaceCardEditor } from "custom-card-helpers";
 import type {
   ControlConfig,
   ControlType,
+  GroupConfig,
   RetroControlPanelCardConfig,
   RowConfig,
 } from "./types.js";
@@ -16,6 +17,11 @@ import type {
  * right widgets. Rows and entities are list-edited with collapsible panels
  * + reorder/delete buttons - HA does not provide a built-in array editor we
  * can rely on across versions, so this part is custom.
+ *
+ * Entities can be nested arbitrarily deep via the `group` type (a control that
+ * holds its own entities array). All entity handlers therefore work on a
+ * `path: number[]` — the chain of indices from the top-level rows array down
+ * to the target entity (e.g. `[2, 0, 1]` = `rows[2].entities[0].entities[1]`).
  */
 
 // ---- option lists ---------------------------------------------------------
@@ -26,6 +32,7 @@ const TYPE_OPTIONS = [
   { value: "seven_segment", label: "Seven-segment display" },
   { value: "vu_meter",      label: "VU meter" },
   { value: "gauge",         label: "Gauge" },
+  { value: "group",         label: "Group" },
 ];
 
 const THEME_OPTIONS = [
@@ -39,6 +46,12 @@ const LABEL_STYLE_OPTIONS = [
   { value: "etched", label: "Etched (engraved)" },
   { value: "dymo",   label: "Dymo (embossed tape)" },
   { value: "none",   label: "None" },
+];
+
+/** Dropdown options for fields that fall back to the panel default. */
+const LABEL_STYLE_INHERIT_OPTIONS = [
+  { value: "", label: "(inherit from panel)" },
+  ...LABEL_STYLE_OPTIONS,
 ];
 
 const GLOW_COLOR_OPTIONS = [
@@ -70,8 +83,6 @@ const GROUP_STYLE_OPTIONS = [
 ];
 
 // ---- schemas --------------------------------------------------------------
-// `ha-form` accepts loosely-typed selector schemas; we use `any[]` here
-// because the HA frontend's exact schema shape is not in custom-card-helpers.
 
 type FormSchema = readonly unknown[];
 
@@ -105,6 +116,14 @@ const ROW_SCHEMA: FormSchema = [
     schema: [
       { name: "justify",     selector: { select: { options: JUSTIFY_OPTIONS, mode: "dropdown" } } },
       { name: "group_style", selector: { select: { options: GROUP_STYLE_OPTIONS, mode: "dropdown" } } },
+    ],
+  },
+  {
+    type: "grid",
+    name: "",
+    schema: [
+      { name: "label",       selector: { text: {} } },
+      { name: "label_style", selector: { select: { options: LABEL_STYLE_INHERIT_OPTIONS, mode: "dropdown" } } },
     ],
   },
 ];
@@ -269,12 +288,29 @@ const SCHEMAS_BY_TYPE: Record<ControlType, FormSchema> = {
     INDICATOR_FIELD,
     ...ACTION_FIELDS,
   ],
+  // Groups don't have an entity / actions / unit - just the frame + label
+  // controls. Their nested entities are managed by a separate list editor
+  // below the ha-form (see _renderGroupChildren).
+  group: [
+    { name: "type", selector: { select: { options: TYPE_OPTIONS, mode: "dropdown" } } },
+    {
+      type: "grid",
+      name: "",
+      schema: [
+        { name: "group_style", selector: { select: { options: GROUP_STYLE_OPTIONS, mode: "dropdown" } } },
+        { name: "label_style", selector: { select: { options: LABEL_STYLE_INHERIT_OPTIONS, mode: "dropdown" } } },
+      ],
+    },
+    { name: "label", selector: { text: {} } },
+  ],
 };
 
 /** Keys that may legally appear on each control type - used to prune stale
     fields when the user changes a control's type via the form. `width`/`height`
     are still allowed in YAML for power-users; `label_style` is intentionally
-    omitted - label style is always inherited from the panel. */
+    omitted from the entity COMMON_KEYS - control label style is always
+    inherited from the panel. Groups are different: they get their own
+    label_style override (and don't have entity / actions / common fields). */
 const COMMON_KEYS = [
   "type", "entity", "label", "width", "height",
   "tap_action", "hold_action", "double_tap_action",
@@ -306,6 +342,9 @@ const VALID_KEYS_BY_TYPE: Record<ControlType, ReadonlySet<string>> = {
     "min", "max", "unit", "major_ticks", "minor_ticks",
     "show_value", "value_size", "value_color",
     "attribute", "indicator",
+  ]),
+  group: new Set([
+    "type", "group_style", "label", "label_style", "entities", "width", "height",
   ]),
 };
 
@@ -396,6 +435,12 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
       gap: 8px;
       padding: 8px 0 4px 0;
     }
+    .group-children {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 4px 0 0 0;
+    }
     .actions-bar {
       display: flex;
       gap: 8px;
@@ -456,12 +501,17 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
     const rowData = {
       justify: row.justify ?? "center",
       group_style: row.group_style ?? "none",
+      label: row.label ?? "",
+      label_style: row.label_style ?? "",
     };
+    const headerTitle = row.label?.trim()
+      ? row.label.trim()
+      : `Row ${ri + 1}`;
     return html`
       <ha-expansion-panel outlined>
         <div slot="header" class="row-header">
           <span class="header-title">
-            Row ${ri + 1}
+            ${headerTitle}
             <span class="muted">(${row.entities.length} ${row.entities.length === 1 ? "entity" : "entities"})</span>
           </span>
           <div class="row-actions" @click=${stop}>
@@ -490,17 +540,19 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
             .data=${rowData}
             .schema=${ROW_SCHEMA}
             .computeLabel=${this._computeLabel}
+            .computeHelper=${this._computeHelper}
             @value-changed=${(ev: CustomEvent) => this._handleRowChange(ri, ev)}
           ></ha-form>
 
           <div class="panel-list">
             ${row.entities.length === 0
               ? html`<div class="empty">No entities yet.</div>`
-              : row.entities.map((ent, ei) => this._renderEntity(ent, ri, ei, row.entities.length))}
+              : row.entities.map((ent, ei) =>
+                  this._renderEntity(ent, [ri, ei], row.entities.length))}
           </div>
 
           <div class="actions-bar">
-            <mwc-button outlined @click=${() => this._addEntity(ri)}>
+            <mwc-button outlined @click=${() => this._addEntity([ri])}>
               <ha-icon icon="mdi:plus" style="margin-right: 4px;"></ha-icon>
               Add entity
             </mwc-button>
@@ -510,31 +562,41 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
     `;
   }
 
-  private _renderEntity(ent: ControlConfig, ri: number, ei: number, total: number) {
+  /**
+   * Renders an entity (or a nested group) at the given path. `total` is the
+   * count of siblings in the parent's entities array, used for disabling the
+   * move-left/right buttons at the boundaries.
+   */
+  private _renderEntity(ent: ControlConfig, path: number[], total: number): TemplateResult {
+    const ei = path[path.length - 1];
     const schema = this._entitySchema(ent);
+    const isGroup = ent.type === "group";
+    const headerSubtitle = isGroup
+      ? ((ent as GroupConfig).label?.trim() || `${(ent as GroupConfig).entities?.length ?? 0} entities`)
+      : (ent.entity ?? "(no entity)");
     return html`
       <ha-expansion-panel outlined>
         <div slot="header" class="entity-header">
           <span class="type-chip">${ent.type}</span>
           <span class="header-title">
-            <span class="entity-id">${ent.entity ?? "(no entity)"}</span>
+            <span class="entity-id">${headerSubtitle}</span>
           </span>
           <div class="entity-actions" @click=${stop}>
             <ha-icon-button
               .disabled=${ei === 0}
               .label=${"Move left"}
-              @click=${() => this._moveEntity(ri, ei, -1)}>
+              @click=${() => this._moveEntity(path, -1)}>
               <ha-icon icon="mdi:arrow-left"></ha-icon>
             </ha-icon-button>
             <ha-icon-button
               .disabled=${ei === total - 1}
               .label=${"Move right"}
-              @click=${() => this._moveEntity(ri, ei, 1)}>
+              @click=${() => this._moveEntity(path, 1)}>
               <ha-icon icon="mdi:arrow-right"></ha-icon>
             </ha-icon-button>
             <ha-icon-button
               .label=${"Remove entity"}
-              @click=${() => this._removeEntity(ri, ei)}>
+              @click=${() => this._removeEntity(path)}>
               <ha-icon icon="mdi:delete"></ha-icon>
             </ha-icon-button>
           </div>
@@ -542,14 +604,37 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
         <div class="entity-content">
           <ha-form
             .hass=${this.hass}
-            .data=${ent}
+            .data=${this._entityFormData(ent)}
             .schema=${schema}
             .computeLabel=${this._computeLabel}
             .computeHelper=${this._computeHelper}
-            @value-changed=${(ev: CustomEvent) => this._handleEntityChange(ri, ei, ev)}
+            @value-changed=${(ev: CustomEvent) => this._handleEntityChange(path, ev)}
           ></ha-form>
+          ${isGroup ? this._renderGroupChildren(ent as GroupConfig, path) : nothing}
         </div>
       </ha-expansion-panel>
+    `;
+  }
+
+  /** Nested entities list + Add button inside a group's entity panel. */
+  private _renderGroupChildren(group: GroupConfig, path: number[]): TemplateResult {
+    const children = group.entities ?? [];
+    return html`
+      <div class="group-children">
+        <div class="section-title" style="margin: 8px 0 0 0; font-size: 13px;">Group entities</div>
+        <div class="panel-list">
+          ${children.length === 0
+            ? html`<div class="empty">No entities in this group.</div>`
+            : children.map((sub, ei) =>
+                this._renderEntity(sub, [...path, ei], children.length))}
+        </div>
+        <div class="actions-bar">
+          <mwc-button outlined @click=${() => this._addEntity(path)}>
+            <ha-icon icon="mdi:plus" style="margin-right: 4px;"></ha-icon>
+            Add to group
+          </mwc-button>
+        </div>
+      </div>
     `;
   }
 
@@ -563,7 +648,9 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
   private _entitySchema(ent: ControlConfig): FormSchema {
     const base = SCHEMAS_BY_TYPE[ent.type] ?? COMMON_ENTITY_FIELDS;
     if (!NUMERIC_TYPES.has(ent.type)) return base;
-    const opts = this._numericAttributeOptions(ent.entity);
+    const opts = this._numericAttributeOptions(
+      (ent as { entity?: string }).entity,
+    );
     if (opts.length === 0) return base;
     const attrField = {
       name: "attribute",
@@ -575,6 +662,24 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
     const out = [...base];
     out.splice(COMMON_ENTITY_FIELDS.length, 0, attrField);
     return out;
+  }
+
+  /**
+   * ha-form binds to the data object by name; missing keys render as empty.
+   * For groups, we also seed label_style to "" so the inherit option is
+   * pre-selected rather than showing the first concrete option.
+   */
+  private _entityFormData(ent: ControlConfig): Record<string, unknown> {
+    if (ent.type === "group") {
+      const g = ent as GroupConfig;
+      return {
+        type: g.type,
+        group_style: g.group_style ?? "none",
+        label: g.label ?? "",
+        label_style: g.label_style ?? "",
+      };
+    }
+    return ent as unknown as Record<string, unknown>;
   }
 
   /** Numeric attributes of an entity, as select options. */
@@ -608,7 +713,10 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
       return "Leave empty to use the entity's unit of measurement, or type a custom one. Type a single space to show no unit at all.";
     }
     if (schema?.name === "group_style") {
-      return "Decorative frame around this row's controls. Embossed = raised bezel; screwed = sub-panel with corner screws; stencil = painted L-brackets at the corners.";
+      return "Decorative frame around this cluster's controls. Embossed = engraved outline; screwed = sub-panel with corner screws; stencil = painted L-brackets at the corners.";
+    }
+    if (schema?.name === "label_style") {
+      return "How this label is rendered. Leave on 'inherit' to follow the panel's label style.";
     }
     if (schema?.name === "attribute") {
       return "Which numeric attribute to display. Default picks a sensible one (weather→temperature, climate→current temperature).";
@@ -642,30 +750,56 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
       // Drop the implicit defaults so the YAML stays clean.
       if (merged.justify === "center") delete (merged as Partial<RowConfig>).justify;
       if (merged.group_style === "none") delete (merged as Partial<RowConfig>).group_style;
+      // ha-form clears text fields to ""; treat that as "no label" (a single
+      // space, by contrast, is the explicit "hide" sentinel - preserve it).
+      if ((merged as { label?: string }).label === "") {
+        delete (merged as Partial<RowConfig>).label;
+      }
+      if ((merged as { label_style?: string }).label_style === "") {
+        delete (merged as Partial<RowConfig>).label_style;
+      }
       return merged;
     });
     this._fireConfigChanged({ ...this._config, rows });
   };
 
-  private _handleEntityChange = (ri: number, ei: number, ev: CustomEvent) => {
+  private _handleEntityChange = (path: number[], ev: CustomEvent) => {
     if (!this._config) return;
     const incoming = ev.detail.value as ControlConfig;
-    const oldEntity = this._config.rows[ri].entities[ei];
+    const oldEntity = getEntityAt(this._config.rows, path);
 
-    // If the type changed, prune fields that don't apply to the new type so
-    // we don't accumulate stale config keys when users swap control kinds.
     let next: ControlConfig = { ...incoming };
+    // Type change: prune fields that don't apply to the new type so stale keys
+    // don't pile up. Going TO a group also seeds the `entities` array.
     if (incoming.type !== oldEntity.type) {
-      const valid = VALID_KEYS_BY_TYPE[incoming.type] ?? new Set(["type", "entity"]);
+      const valid = VALID_KEYS_BY_TYPE[incoming.type] ?? new Set(["type"]);
       next = Object.fromEntries(
         Object.entries(next).filter(([k]) => valid.has(k)),
       ) as ControlConfig;
+      if (incoming.type === "group") {
+        const g = next as GroupConfig;
+        if (!Array.isArray(g.entities)) g.entities = [];
+      }
+    }
+    // For groups, preserve the nested entities array (ha-form doesn't carry
+    // it in the value, since it's not a schema field).
+    if (next.type === "group" && oldEntity.type === "group") {
+      (next as GroupConfig).entities = (oldEntity as GroupConfig).entities ?? [];
     }
     // Drop empties so the YAML stays clean.
-    if (!next.entity) delete (next as { entity?: string }).entity;
-    // Per-control label_style is no longer supported (always inherited from the
+    if (!(next as { entity?: string }).entity) {
+      delete (next as { entity?: string }).entity;
+    }
+    // ha-form sends "" for the "(inherit)" choice on the label_style select;
+    // strip it so we don't persist label_style: "" in the YAML.
+    if ((next as { label_style?: string }).label_style === "") {
+      delete (next as { label_style?: string }).label_style;
+    }
+    // Non-group entities never carry label_style (always inherited from the
     // panel); strip any leftover so editing a control cleans up old configs.
-    delete (next as { label_style?: string }).label_style;
+    if (next.type !== "group") {
+      delete (next as { label_style?: string }).label_style;
+    }
     if ((next as { indicator?: string }).indicator === "") {
       delete (next as { indicator?: string }).indicator;
     }
@@ -675,13 +809,16 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
     if ((next as { value_color?: string }).value_color === "") {
       delete (next as { value_color?: string }).value_color;
     }
+    if ((next as { group_style?: string }).group_style === "none") {
+      delete (next as { group_style?: string }).group_style;
+    }
 
-    const rows = this._config.rows.map((row, idx) => {
-      if (idx !== ri) return row;
-      const entities = row.entities.map((e, eIdx) => (eIdx === ei ? next : e));
-      return { ...row, entities };
-    });
-    this._fireConfigChanged({ ...this._config, rows });
+    const parentPath = path.slice(0, -1);
+    const ei = path[path.length - 1];
+    const newRows = updateRowEntities(this._config.rows, parentPath, (entities) =>
+      entities.map((e, idx) => (idx === ei ? next : e)),
+    );
+    this._fireConfigChanged({ ...this._config, rows: newRows });
   };
 
   private _addRow = () => {
@@ -705,34 +842,44 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
     this._fireConfigChanged({ ...this._config, rows });
   };
 
-  private _addEntity = (ri: number) => {
+  /**
+   * Append a new entity at the given parent path. `parentPath = [ri]` appends
+   * to row[ri].entities; `parentPath = [ri, ei]` appends to the group at that
+   * position (deeper paths recurse through nested groups).
+   */
+  private _addEntity = (parentPath: number[]) => {
     if (!this._config) return;
-    const rows = this._config.rows.map((row, idx) => {
-      if (idx !== ri) return row;
-      const newEntity: ControlConfig = { type: "button" } as ControlConfig;
-      return { ...row, entities: [...row.entities, newEntity] };
-    });
-    this._fireConfigChanged({ ...this._config, rows });
+    const newEntity: ControlConfig = { type: "button" } as ControlConfig;
+    const newRows = updateRowEntities(
+      this._config.rows,
+      parentPath,
+      (entities) => [...entities, newEntity],
+    );
+    this._fireConfigChanged({ ...this._config, rows: newRows });
   };
 
-  private _removeEntity = (ri: number, ei: number) => {
+  private _removeEntity = (path: number[]) => {
     if (!this._config) return;
-    const rows = this._config.rows.map((row, idx) => {
-      if (idx !== ri) return row;
-      return { ...row, entities: row.entities.filter((_, eIdx) => eIdx !== ei) };
-    });
-    this._fireConfigChanged({ ...this._config, rows });
+    const ei = path[path.length - 1];
+    const parentPath = path.slice(0, -1);
+    const newRows = updateRowEntities(this._config.rows, parentPath, (entities) =>
+      entities.filter((_, idx) => idx !== ei),
+    );
+    this._fireConfigChanged({ ...this._config, rows: newRows });
   };
 
-  private _moveEntity = (ri: number, ei: number, delta: number) => {
+  private _moveEntity = (path: number[], delta: number) => {
     if (!this._config) return;
-    const row = this._config.rows[ri];
-    const target = ei + delta;
-    if (target < 0 || target >= row.entities.length) return;
-    const entities = [...row.entities];
-    [entities[ei], entities[target]] = [entities[target], entities[ei]];
-    const rows = this._config.rows.map((r, idx) => (idx === ri ? { ...r, entities } : r));
-    this._fireConfigChanged({ ...this._config, rows });
+    const ei = path[path.length - 1];
+    const parentPath = path.slice(0, -1);
+    const newRows = updateRowEntities(this._config.rows, parentPath, (entities) => {
+      const target = ei + delta;
+      if (target < 0 || target >= entities.length) return entities;
+      const next = [...entities];
+      [next[ei], next[target]] = [next[target], next[ei]];
+      return next;
+    });
+    this._fireConfigChanged({ ...this._config, rows: newRows });
   };
 
   private _fireConfigChanged(config: RetroControlPanelCardConfig) {
@@ -757,6 +904,71 @@ function pruneEmpty(obj: Record<string, unknown>, keys: string[]): void {
   for (const k of keys) {
     if (obj[k] === "" || obj[k] === undefined) delete obj[k];
   }
+}
+
+/**
+ * Resolve the entity at `path` in the rows tree. Path of length >= 2 is
+ * required (path[0] is the row, subsequent indices descend through entities).
+ */
+function getEntityAt(rows: RowConfig[], path: number[]): ControlConfig {
+  if (path.length < 2) {
+    throw new Error(`entity path requires at least 2 indices, got ${path.length}`);
+  }
+  let target: ControlConfig | undefined;
+  let entities: ControlConfig[] = rows[path[0]].entities;
+  for (let i = 1; i < path.length; i++) {
+    target = entities[path[i]];
+    if (i < path.length - 1) {
+      if (target.type !== "group") {
+        throw new Error("path navigates into a non-group entity");
+      }
+      entities = (target as GroupConfig).entities;
+    }
+  }
+  return target!;
+}
+
+/**
+ * Immutably update the entities array at `parentPath` via `fn`. Parent path
+ * `[ri]` targets a row's entities; `[ri, ei]` targets a group's entities at
+ * that position; longer paths descend through nested groups.
+ */
+function updateRowEntities(
+  rows: RowConfig[],
+  parentPath: number[],
+  fn: (entities: ControlConfig[]) => ControlConfig[],
+): RowConfig[] {
+  if (parentPath.length === 0) {
+    throw new Error("parent path requires at least the row index");
+  }
+  return rows.map((row, ri) => {
+    if (ri !== parentPath[0]) return row;
+    if (parentPath.length === 1) {
+      return { ...row, entities: fn(row.entities) };
+    }
+    return { ...row, entities: updateInGroup(row.entities, parentPath.slice(1), fn) };
+  });
+}
+
+function updateInGroup(
+  entities: ControlConfig[],
+  parentPath: number[],
+  fn: (entities: ControlConfig[]) => ControlConfig[],
+): ControlConfig[] {
+  const head = parentPath[0];
+  const rest = parentPath.slice(1);
+  return entities.map((ent, idx) => {
+    if (idx !== head) return ent;
+    if (ent.type !== "group") {
+      throw new Error("path navigates into a non-group entity");
+    }
+    const group = ent as GroupConfig;
+    const innerEntities = group.entities ?? [];
+    if (rest.length === 0) {
+      return { ...group, entities: fn(innerEntities) };
+    }
+    return { ...group, entities: updateInGroup(innerEntities, rest, fn) };
+  });
 }
 
 declare global {

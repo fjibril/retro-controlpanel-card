@@ -1,6 +1,6 @@
 {
   "name": "retro-controlpanel-card",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A Home Assistant Lovelace custom card that renders entities as a retro 60s/70s-style control panel: flip switches, glowing buttons, VU meter, analog gauge and seven-segment displays.",
   "type": "module",
   "main": "dist/retro-controlpanel-card.js",

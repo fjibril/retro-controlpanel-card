@@ -9,9 +9,11 @@ import {
 } from "./const.js";
 import type {
   ControlConfig,
+  GroupConfig,
   LabelStyle,
   RetroControlPanelCardConfig,
   RowConfig,
+  RowGroupStyle,
 } from "./types.js";
 import { panelStyles } from "./styles/panel-styles.js";
 import { themeStyles, DEFAULT_THEME, ALL_THEMES } from "./styles/themes.js";
@@ -33,7 +35,30 @@ const KNOWN_TYPES = new Set([
   "gauge",
   "flip_switch",
   "button",
+  "group",
 ]);
+
+/** Recursive entity validation - groups carry their own entities array. */
+function validateEntities(entities: ControlConfig[], location: string): void {
+  for (const [ei, ent] of entities.entries()) {
+    if (!ent || typeof ent !== "object") {
+      throw new Error(`${location} entity ${ei} is not an object`);
+    }
+    if (!ent.type || !KNOWN_TYPES.has(ent.type)) {
+      throw new Error(
+        `${location} entity ${ei}: unknown type '${ent.type ?? "<missing>"}'. ` +
+          `Expected one of: ${[...KNOWN_TYPES].join(", ")}`,
+      );
+    }
+    if (ent.type === "group") {
+      const g = ent as GroupConfig;
+      if (!Array.isArray(g.entities)) {
+        throw new Error(`${location} entity ${ei}: group must have an 'entities' array`);
+      }
+      validateEntities(g.entities, `${location} > group ${ei}`);
+    }
+  }
+}
 
 @customElement(CARD_TAG)
 export class RetroControlPanelCard extends LitElement {
@@ -57,17 +82,7 @@ export class RetroControlPanelCard extends LitElement {
       if (!row || !Array.isArray(row.entities)) {
         throw new Error(`Row ${ri} must have an 'entities' array`);
       }
-      for (const [ei, ent] of row.entities.entries()) {
-        if (!ent || typeof ent !== "object") {
-          throw new Error(`Row ${ri} entity ${ei} is not an object`);
-        }
-        if (!ent.type || !KNOWN_TYPES.has(ent.type)) {
-          throw new Error(
-            `Row ${ri} entity ${ei}: unknown type '${ent.type ?? "<missing>"}'. ` +
-              `Expected one of: ${[...KNOWN_TYPES].join(", ")}`,
-          );
-        }
-      }
+      validateEntities(row.entities, `Row ${ri}`);
     }
     this.config = config;
     this.configError = undefined;
@@ -200,38 +215,66 @@ export class RetroControlPanelCard extends LitElement {
 
   private renderRow(row: RowConfig, defaultLabelStyle: LabelStyle) {
     const justify = row.justify ?? "center";
-    const group = row.group_style ?? "none";
     const cells = row.entities.map((ent) => this.renderControl(ent, defaultLabelStyle));
-    // No frame: cells are direct flex children of .row (original layout).
-    if (group === "none") {
-      return html`
-        <div class="row" style="--row-justify: ${justify};">${cells}</div>
-      `;
-    }
-    // Framed: wrap cells in a .row-group. The frame's decorations (screws /
-    // brackets) sit absolutely inside the group; .group-inner re-creates the
-    // same flex layout the .row would have had so cells lay out identically.
+    const content = this.renderFramed(
+      cells,
+      row.group_style,
+      row.label,
+      row.label_style,
+      defaultLabelStyle,
+    );
     return html`
-      <div class="row" style="--row-justify: ${justify};">
-        <div class="row-group group-${group}" part="row-group">
-          ${group === "screwed"
-            ? html`
-                ${this.renderScrew("tl", 24)}
-                ${this.renderScrew("tr", -52)}
-                ${this.renderScrew("bl", 68)}
-                ${this.renderScrew("br", -14)}
-              `
-            : nothing}
-          ${group === "stencil"
-            ? html`
-                <span class="bracket tl"></span>
-                <span class="bracket tr"></span>
-                <span class="bracket bl"></span>
-                <span class="bracket br"></span>
-              `
-            : nothing}
-          <div class="group-inner">${cells}</div>
-        </div>
+      <div class="row" style="--row-justify: ${justify};">${content}</div>
+    `;
+  }
+
+  /**
+   * Wraps a list of cells in an optional decorative frame (`.row-group.group-*`)
+   * and/or an optional title label. Used for both rows and nested groups so
+   * they share styling. When neither a frame nor a label is configured, the
+   * cells are returned bare (current default flat layout).
+   */
+  private renderFramed(
+    cells: unknown,
+    groupStyle: RowGroupStyle | undefined,
+    label: string | undefined,
+    labelStyle: LabelStyle | undefined,
+    defaultLabelStyle: LabelStyle,
+  ) {
+    const style = groupStyle ?? "none";
+    const trimmedLabel = label?.trim() ?? "";
+    const hasLabel = trimmedLabel.length > 0;
+    if (style === "none" && !hasLabel) return cells;
+
+    const resolvedLabelStyle = labelStyle ?? defaultLabelStyle;
+    const labelEl = hasLabel
+      ? html`<retro-label
+          class="group-label"
+          .text=${trimmedLabel}
+          .styleName=${resolvedLabelStyle}
+        ></retro-label>`
+      : nothing;
+
+    return html`
+      <div class="row-group group-${style}" part="row-group">
+        ${style === "screwed"
+          ? html`
+              ${this.renderScrew("tl", 24)}
+              ${this.renderScrew("tr", -52)}
+              ${this.renderScrew("bl", 68)}
+              ${this.renderScrew("br", -14)}
+            `
+          : nothing}
+        ${style === "stencil"
+          ? html`
+              <span class="bracket tl"></span>
+              <span class="bracket tr"></span>
+              <span class="bracket bl"></span>
+              <span class="bracket br"></span>
+            `
+          : nothing}
+        ${labelEl}
+        <div class="group-inner">${cells}</div>
       </div>
     `;
   }
@@ -242,6 +285,18 @@ export class RetroControlPanelCard extends LitElement {
     // is ignored).
     const labelStyle = defaultLabelStyle;
     switch (ent.type) {
+      case "group": {
+        const g = ent as GroupConfig;
+        const cells = g.entities.map((sub) => this.renderControl(sub, defaultLabelStyle));
+        const inner = this.renderFramed(
+          cells,
+          g.group_style,
+          g.label,
+          g.label_style,
+          defaultLabelStyle,
+        );
+        return html`<div class="cell">${inner}</div>`;
+      }
       case "seven_segment":
         return html`<div class="cell">
           <retro-seven-segment

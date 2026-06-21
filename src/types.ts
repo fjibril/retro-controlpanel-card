@@ -121,12 +121,33 @@ export interface ButtonConfig extends BaseControlConfig {
   text?: string;
 }
 
+/**
+ * A nested cluster of controls inside a row. Sits in the parent's flex layout
+ * as one inline-flex unit, but holds its own `entities[]` (which may include
+ * further groups). The optional frame + label work just like a row's.
+ */
+export interface GroupConfig {
+  type: "group";
+  /** Optional cluster label. Same single-space-hides convention as control labels. */
+  label?: string;
+  /** Label style for this group (and the cluster's frame label). Falls back to the panel default. */
+  label_style?: LabelStyle;
+  /** Decorative frame around the cluster. Defaults to "none". */
+  group_style?: RowGroupStyle;
+  entities: ControlConfig[];
+  /** CSS width override. */
+  width?: string;
+  /** CSS height override. */
+  height?: string;
+}
+
 export type ControlConfig =
   | SevenSegmentConfig
   | VuMeterConfig
   | GaugeConfig
   | FlipSwitchConfig
-  | ButtonConfig;
+  | ButtonConfig
+  | GroupConfig;
 
 export type ControlType = ControlConfig["type"];
 
@@ -136,6 +157,10 @@ export interface RowConfig {
   justify?: "start" | "center" | "end" | "space-between" | "space-around";
   /** Decorative frame around this row's controls. Defaults to "none". */
   group_style?: RowGroupStyle;
+  /** Optional row title. Same single-space-hides convention as control labels. */
+  label?: string;
+  /** Label style for this row's title. Falls back to the panel default. */
+  label_style?: LabelStyle;
 }
 
 export interface RetroControlPanelCardConfig extends LovelaceCardConfig {
