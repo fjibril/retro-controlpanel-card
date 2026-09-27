@@ -39,8 +39,20 @@ export type ActionConfig =
   | { action: "url"; url_path: string }
   | { action: "call-service"; service: string; service_data?: Record<string, unknown> };
 
+/**
+ * What a seven-segment display shows:
+ *  - `number`    : the numeric value (default)
+ *  - `time`      : a timestamp as HH:MM; with no entity, the current time (clock)
+ *  - `countdown` : time until a timestamp; "-" prefix once it has passed
+ */
+export type SevenSegmentMode = "number" | "time" | "countdown";
+
 export interface SevenSegmentConfig extends BaseControlConfig {
   type: "seven_segment";
+  /** Defaults to "number". The digit / fraction / leading-zero keys only apply to "number". */
+  display_mode?: SevenSegmentMode;
+  /** Time and countdown modes: add a seconds slot (HH:MM:SS). */
+  show_seconds?: boolean;
   num_digits?: number;
   leading_zeros?: boolean;
   maximum_fraction_digits?: number;
@@ -150,6 +162,9 @@ export type ControlConfig =
   | GroupConfig;
 
 export type ControlType = ControlConfig["type"];
+
+/** The controls that render an entity (everything except layout groups). */
+export type EntityControlConfig = Exclude<ControlConfig, GroupConfig>;
 
 export interface RowConfig {
   entities: ControlConfig[];

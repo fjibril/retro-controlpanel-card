@@ -5,17 +5,43 @@ import type { GlowColor, SevenSegmentConfig } from "./../types.js";
 import { actionHandler, hasAction } from "./../action-handler-directive.js";
 import { GLOW_PALETTE } from "./glow-palette.js";
 import { digitSvg } from "./segment-shapes.js";
+import {
+  clockTokens,
+  countdownTokens,
+  isTimeMode,
+  nextFlipDelay,
+  parseIsoInstant,
+  parsePlainTime,
+  secondsOfDay,
+  wallTimeAt,
+  type WallTime,
+} from "./time-format.js";
 import "./retro-label.js";
 import "./retro-indicator.js";
+
+/** Where a time mode gets its time from. */
+type TimeSource =
+  | { kind: "now" }
+  | { kind: "instant"; ms: number }
+  | { kind: "wall"; t: WallTime };
 
 /**
  * Classic 7-segment LED display. Renders one SVG per digit, plus optional
  * decimal points and a minus sign. All segments are present in the DOM at low
  * opacity to give the authentic "ghost segment" look.
+ *
+ * In the time modes (clock / countdown) the display ticks on a local timer
+ * that fires only when the shown value actually changes - once a second with
+ * seconds shown, once a minute without. Ticks just re-render; they never talk
+ * to Home Assistant.
  */
 @customElement("retro-seven-segment")
 export class RetroSevenSegment extends RetroControlBase {
   declare config: SevenSegmentConfig;
+
+  private tickTimer?: ReturnType<typeof setTimeout>;
+  /** The "now" the last render used, so the next tick is scheduled from it. */
+  private renderedAt = 0;
 
   static styles = css`
     :host {
@@ -66,6 +92,24 @@ export class RetroSevenSegment extends RetroControlBase {
     .dp-dot.off {
       background: var(--retro-segment-off);
       box-shadow: none;
+    }
+    /* Clock colon: two LEDs stacked at a third and two thirds of the digit
+       height, in their own narrow cell between digits. */
+    .colon {
+      width: 0.45em;
+      height: 2em;
+      display: inline-flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5em;
+    }
+    .colon-dot {
+      width: 0.25em;
+      height: 0.25em;
+      border-radius: 50%;
+      background: var(--retro-segment-on);
+      box-shadow: var(--retro-segment-glow);
     }
     /* Unit sits on the panel beside the window, so it's an etched/dymo label
        (not a glowing LCD element). Note: no uppercase - units keep their
@@ -119,15 +163,28 @@ export class RetroSevenSegment extends RetroControlBase {
     }
   `;
 
+  connectedCallback(): void {
+    super.connectedCallback();
+    // Coming back after being detached: refresh the stale time and restart
+    // the ticker (scheduling happens in updated()).
+    if (this.hasUpdated) this.requestUpdate();
+  }
+
+  disconnectedCallback(): void {
+    super.disconnectedCallback();
+    this.clearTick();
+  }
+
   protected updated(changed: Map<string, unknown>): void {
     super.updated(changed);
     if (changed.has("config")) this.applyColorOverride(this.config?.color);
+    this.scheduleTick();
   }
 
   render() {
     const cfg = this.config;
-    const numDigits = Math.max(1, cfg.num_digits ?? 4);
-    const tokens = this.formatTokens(numDigits);
+    this.renderedAt = Date.now();
+    const tokens = this.displayTokens(this.renderedAt);
     const unit = this.resolvedUnit();
 
     return html`
@@ -171,16 +228,106 @@ export class RetroSevenSegment extends RetroControlBase {
     this.style.setProperty("--retro-segment-glow", `0 0 0.18em ${p.on}`);
   }
 
-  /** A token is either a digit/letter ("0"-"9", "-", " ") or "." for a DP. */
+  /** A token is a digit/letter ("0"-"9", "-", " "), "." for a DP or ":" for a colon. */
   private renderToken(token: string) {
     if (token === ".") {
       return html`<span class="dp"><span class="dp-dot"></span></span>`;
+    }
+    if (token === ":") {
+      return html`<span class="colon"><span class="colon-dot"></span><span class="colon-dot"></span></span>`;
     }
     return html`<span class="digit">${this.renderDigit(token)}</span>`;
   }
 
   private renderDigit(ch: string) {
     return digitSvg(ch);
+  }
+
+  /** Tokens for whatever the display is set to show, as of `now`. */
+  displayTokens(now: number = Date.now()): string[] {
+    const cfg = this.config;
+    if (!isTimeMode(cfg.display_mode)) {
+      return this.formatTokens(Math.max(1, cfg.num_digits ?? 4));
+    }
+    const withSeconds = !!cfg.show_seconds;
+    const src = this.timeSource();
+    const tz = this.displayTimeZone();
+    if (cfg.display_mode === "time") {
+      if (!src) return clockTokens(null, withSeconds);
+      if (src.kind === "wall") return clockTokens(src.t, withSeconds);
+      return clockTokens(wallTimeAt(src.kind === "now" ? now : src.ms, tz), withSeconds);
+    }
+    return countdownTokens(this.countdownSeconds(src, now, tz), withSeconds);
+  }
+
+  /**
+   * The time a time mode displays. No entity means "now" (a clock). Otherwise
+   * the state (or an explicitly configured attribute) must be an ISO
+   * timestamp or a plain HH:MM[:SS]; anything else yields null (dashes).
+   */
+  private timeSource(): TimeSource | null {
+    if (!this.config.entity) return { kind: "now" };
+    const s = this.stateObj;
+    if (!s) return null;
+    const raw = this.config.attribute ? s.attributes?.[this.config.attribute] : s.state;
+    const ms = parseIsoInstant(raw);
+    if (ms !== null) return { kind: "instant", ms };
+    const t = parsePlainTime(raw);
+    return t ? { kind: "wall", t } : null;
+  }
+
+  /** Seconds from now until the target (negative once past), or null. */
+  private countdownSeconds(src: TimeSource | null, now: number, tz: string | undefined): number | null {
+    if (!src || src.kind === "now") return null;
+    if (src.kind === "instant") return (src.ms - now) / 1000;
+    // A bare wall time is taken as today in the display time zone.
+    return secondsOfDay(src.t) - secondsOfDay(wallTimeAt(now, tz));
+  }
+
+  /**
+   * Follow the HA profile's time zone choice: the server's zone when the user
+   * picked "server", otherwise the browser's own zone.
+   */
+  private displayTimeZone(): string | undefined {
+    const locale = this.hass?.locale as { time_zone?: string } | undefined;
+    const config = this.hass?.config as { time_zone?: string } | undefined;
+    return locale?.time_zone === "server" && config?.time_zone ? config.time_zone : undefined;
+  }
+
+  /**
+   * When the display needs to tick: every `period` ms, in phase with `anchor`.
+   * Null for anything static (numbers, a fixed timestamp, dashes).
+   */
+  private tickPlan(): { anchor: number; period: number } | null {
+    const cfg = this.config;
+    if (!cfg || !isTimeMode(cfg.display_mode)) return null;
+    const period = cfg.show_seconds ? 1000 : 60_000;
+    const src = this.timeSource();
+    if (!src) return null;
+    if (cfg.display_mode === "time") return src.kind === "now" ? { anchor: 0, period } : null;
+    if (src.kind === "instant") return { anchor: src.ms, period };
+    // Bare wall-time countdowns change in step with that time's seconds.
+    if (src.kind === "wall") return { anchor: secondsOfDay(src.t) * 1000, period };
+    return null;
+  }
+
+  private scheduleTick(): void {
+    this.clearTick();
+    if (!this.isConnected) return;
+    const plan = this.tickPlan();
+    if (!plan) return;
+    const delay = nextFlipDelay(this.renderedAt || Date.now(), plan.anchor, plan.period);
+    this.tickTimer = setTimeout(() => {
+      this.tickTimer = undefined;
+      this.requestUpdate();
+    }, delay);
+  }
+
+  private clearTick(): void {
+    if (this.tickTimer !== undefined) {
+      clearTimeout(this.tickTimer);
+      this.tickTimer = undefined;
+    }
   }
 
   /**

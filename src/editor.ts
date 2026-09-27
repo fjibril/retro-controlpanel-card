@@ -7,7 +7,9 @@ import type {
   GroupConfig,
   RetroControlPanelCardConfig,
   RowConfig,
+  SevenSegmentConfig,
 } from "./types.js";
+import { isTimeMode, parseIsoInstant, parsePlainTime } from "./controls/time-format.js";
 
 /**
  * Visual editor for retro-controlpanel-card.
@@ -73,6 +75,12 @@ const JUSTIFY_OPTIONS = [
 const ORIENTATION_OPTIONS = [
   { value: "vertical",   label: "Vertical" },
   { value: "horizontal", label: "Horizontal" },
+];
+
+const DISPLAY_MODE_OPTIONS = [
+  { value: "number",    label: "Number" },
+  { value: "time",      label: "Time (clock when no entity)" },
+  { value: "countdown", label: "Countdown / time since" },
 ];
 
 const GROUP_STYLE_OPTIONS = [
@@ -160,6 +168,16 @@ const VALUE_COLOR_FIELD = {
   selector: { select: { options: [{ value: "", label: "(theme default)" }, ...GLOW_COLOR_OPTIONS], mode: "dropdown" } },
 };
 
+/** Seven-segment display mode + seconds toggle. The attribute dropdown is inserted after it. */
+const SEVEN_SEGMENT_MODE_ROW = {
+  type: "grid",
+  name: "",
+  schema: [
+    { name: "display_mode", selector: { select: { options: DISPLAY_MODE_OPTIONS, mode: "dropdown" } } },
+    { name: "show_seconds", selector: { boolean: {} } },
+  ],
+};
+
 /** Control types that can read a numeric attribute + show a status LED. */
 const NUMERIC_TYPES = new Set<ControlType>(["seven_segment", "vu_meter", "gauge"]);
 
@@ -190,6 +208,7 @@ const SCHEMAS_BY_TYPE: Record<ControlType, FormSchema> = {
   ],
   seven_segment: [
     ...COMMON_ENTITY_FIELDS,
+    SEVEN_SEGMENT_MODE_ROW,
     {
       type: "grid",
       name: "",
@@ -327,6 +346,7 @@ const VALID_KEYS_BY_TYPE: Record<ControlType, ReadonlySet<string>> = {
   ]),
   seven_segment: new Set([
     ...COMMON_KEYS,
+    "display_mode", "show_seconds",
     "num_digits", "leading_zeros", "maximum_fraction_digits",
     "minimum_fraction_digits", "unit", "color", "attribute", "indicator",
   ]),
@@ -642,25 +662,33 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
    * Schema for a control's form. For numeric controls we inject an `attribute`
    * dropdown listing only the *numeric* attributes of the selected entity (so
    * a weather/climate entity's temperature/humidity show up, but the
-   * sunny/cloudy condition or heat/off mode don't). Omitted when the entity
-   * has no numeric attributes (plain sensors don't need it).
+   * sunny/cloudy condition or heat/off mode don't). A seven-segment display in
+   * a time mode lists the attributes holding a time instead (e.g. the sun's
+   * next_rising). Omitted when the entity has no matching attributes.
    */
   private _entitySchema(ent: ControlConfig): FormSchema {
     const base = SCHEMAS_BY_TYPE[ent.type] ?? COMMON_ENTITY_FIELDS;
     if (!NUMERIC_TYPES.has(ent.type)) return base;
-    const opts = this._numericAttributeOptions(
-      (ent as { entity?: string }).entity,
-    );
+    const entityId = (ent as { entity?: string }).entity;
+    const timeMode = ent.type === "seven_segment" && isTimeMode((ent as SevenSegmentConfig).display_mode);
+    const opts = timeMode
+      ? this._timeAttributeOptions(entityId)
+      : this._numericAttributeOptions(entityId);
     if (opts.length === 0) return base;
     const attrField = {
       name: "attribute",
       selector: {
-        select: { options: [{ value: "", label: "(default value)" }, ...opts], mode: "dropdown" },
+        select: {
+          options: [{ value: "", label: timeMode ? "(state)" : "(default value)" }, ...opts],
+          mode: "dropdown",
+        },
       },
     };
-    // Insert right after the common type / entity / label rows.
+    // After the mode row when there is one (the options depend on it),
+    // otherwise right after the common type / entity / label rows.
+    const modeRow = base.indexOf(SEVEN_SEGMENT_MODE_ROW);
     const out = [...base];
-    out.splice(COMMON_ENTITY_FIELDS.length, 0, attrField);
+    out.splice(modeRow >= 0 ? modeRow + 1 : COMMON_ENTITY_FIELDS.length, 0, attrField);
     return out;
   }
 
@@ -679,6 +707,10 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
         label_style: g.label_style ?? "",
       };
     }
+    if (ent.type === "seven_segment") {
+      // Show the implicit default rather than a blank dropdown.
+      return { ...ent, display_mode: ent.display_mode ?? "number" };
+    }
     return ent as unknown as Record<string, unknown>;
   }
 
@@ -690,6 +722,16 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
     const skip = new Set(["supported_features"]);
     return Object.entries(st.attributes ?? {})
       .filter(([k, v]) => typeof v === "number" && Number.isFinite(v) && !skip.has(k))
+      .map(([k]) => ({ value: k, label: this._computeLabel({ name: k }) }));
+  }
+
+  /** Attributes of an entity holding a timestamp or HH:MM time, as select options. */
+  private _timeAttributeOptions(entityId?: string): Array<{ value: string; label: string }> {
+    if (!entityId || !this.hass) return [];
+    const st = this.hass.states[entityId];
+    if (!st) return [];
+    return Object.entries(st.attributes ?? {})
+      .filter(([, v]) => parseIsoInstant(v) !== null || parsePlainTime(v) !== null)
       .map(([k]) => ({ value: k, label: this._computeLabel({ name: k }) }));
   }
 
@@ -719,7 +761,13 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
       return "How this label is rendered. Leave on 'inherit' to follow the panel's label style.";
     }
     if (schema?.name === "attribute") {
-      return "Which numeric attribute to display. Default picks a sensible one (weather→temperature, climate→current temperature).";
+      return "Which attribute to display instead of the state. For numbers the default picks a sensible one (weather→temperature, climate→current temperature); for times, pick one holding a timestamp.";
+    }
+    if (schema?.name === "display_mode") {
+      return "Number shows the value. Time shows a timestamp as HH:MM - leave Entity empty for a live clock. Countdown shows the time left until the timestamp, then '-' and the time since once it has passed. Digits, fraction digits and leading zeros only apply to Number.";
+    }
+    if (schema?.name === "show_seconds") {
+      return "Time and Countdown only: add seconds (HH:MM:SS). Ticks locally in the browser - no extra Home Assistant traffic.";
     }
     if (schema?.name === "indicator") {
       return "Status LED beside the label - lit when the entity is active (for climate: heating).";
@@ -811,6 +859,15 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
     }
     if ((next as { group_style?: string }).group_style === "none") {
       delete (next as { group_style?: string }).group_style;
+    }
+    if (next.type === "seven_segment") {
+      const seg = next as SevenSegmentConfig;
+      // An attribute picked for numbers means nothing for times (and vice
+      // versa), so switching between number and time modes drops it.
+      const oldMode = oldEntity.type === "seven_segment" ? (oldEntity as SevenSegmentConfig).display_mode : undefined;
+      if (isTimeMode(seg.display_mode) !== isTimeMode(oldMode)) delete seg.attribute;
+      if (seg.display_mode === "number") delete seg.display_mode;
+      if (seg.show_seconds === false) delete seg.show_seconds;
     }
 
     const parentPath = path.slice(0, -1);

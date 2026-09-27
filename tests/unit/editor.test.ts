@@ -179,6 +179,38 @@ describe("retro-controlpanel-card-editor", () => {
     expect(group.entities[1].entity).toBe("input_button.a");
   });
 
+  it("prunes default time options and drops a numeric attribute when switching to a time mode", async () => {
+    const hass = makeHass({});
+    const el = await mount<RetroControlPanelCardEditor>("retro-controlpanel-card-editor", (n) => {
+      n.hass = hass;
+      n.setConfig({
+        type: "custom:retro-controlpanel-card",
+        rows: [{ entities: [{ type: "seven_segment", entity: "weather.home", attribute: "temperature" }] }],
+      });
+    });
+    toDispose.push(el);
+    const handler = vi.fn();
+    el.addEventListener("config-changed", handler);
+    const change = (value: Record<string, unknown>) =>
+      (el as unknown as { _handleEntityChange: (path: number[], ev: CustomEvent) => void })._handleEntityChange(
+        [0, 0],
+        new CustomEvent("value-changed", { detail: { value } }),
+      );
+
+    // The seeded defaults come back from ha-form; they must not end up in YAML.
+    change({ type: "seven_segment", entity: "weather.home", attribute: "temperature", display_mode: "number", show_seconds: false });
+    const kept = handler.mock.calls[0][0].detail.config.rows[0].entities[0];
+    expect(kept.display_mode).toBeUndefined();
+    expect(kept.show_seconds).toBeUndefined();
+    expect(kept.attribute).toBe("temperature");
+
+    change({ type: "seven_segment", entity: "weather.home", attribute: "temperature", display_mode: "countdown", show_seconds: true });
+    const switched = handler.mock.calls[1][0].detail.config.rows[0].entities[0];
+    expect(switched.display_mode).toBe("countdown");
+    expect(switched.show_seconds).toBe(true);
+    expect(switched.attribute).toBeUndefined();
+  });
+
   it("exposes getConfigElement on the main card", async () => {
     // Imported lazily so the editor side-effect registers the tag.
     await import("../../src/retro-controlpanel-card.js");
