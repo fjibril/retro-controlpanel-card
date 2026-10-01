@@ -4,7 +4,7 @@ import type { HassEntity } from "home-assistant-js-websocket";
 import type { HomeAssistant } from "custom-card-helpers";
 import type {
   ActionConfig,
-  ControlConfig,
+  EntityControlConfig,
   LabelStyle,
 } from "../types.js";
 
@@ -29,7 +29,7 @@ export interface ActionHandlerEvent extends CustomEvent {
  */
 export abstract class RetroControlBase extends LitElement {
   @property({ attribute: false }) hass?: HomeAssistant;
-  @property({ attribute: false }) config!: ControlConfig;
+  @property({ attribute: false }) config!: EntityControlConfig;
   @property({ attribute: false }) labelStyle: LabelStyle = "etched";
 
   protected get stateObj(): HassEntity | undefined {
