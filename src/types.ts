@@ -47,6 +47,20 @@ export type ActionConfig =
  */
 export type SevenSegmentMode = "number" | "time" | "countdown";
 
+/**
+ * One conditional colour. A rule matches when its value lies strictly inside
+ * `above` / `below` (either or both; with neither it matches any value).
+ * The value is the display's own, or that of `entity` when given: a plain
+ * number, or for a timestamp the minutes until it (negative once passed).
+ */
+export interface ColorRule {
+  color: GlowColor;
+  /** Test this entity instead of the display's own value. */
+  entity?: string;
+  above?: number;
+  below?: number;
+}
+
 export interface SevenSegmentConfig extends BaseControlConfig {
   type: "seven_segment";
   /** Defaults to "number". The digit / fraction / leading-zero keys only apply to "number". */
@@ -62,6 +76,8 @@ export interface SevenSegmentConfig extends BaseControlConfig {
   unit?: string;
   /** Glow colour of the segments. Defaults to theme primary. */
   color?: GlowColor;
+  /** Conditional colours; the first matching rule wins, otherwise `color` applies. */
+  color_rules?: ColorRule[];
   /** Numeric attribute to display instead of the state (e.g. for weather/climate). */
   attribute?: string;
   /** Status LED beside the label in this colour (lit when the entity is active / heating). */
@@ -146,6 +162,8 @@ export interface GroupConfig {
   label_style?: LabelStyle;
   /** Decorative frame around the cluster. Defaults to "none". */
   group_style?: RowGroupStyle;
+  /** Size multiplier for this cluster, on top of the panel's (and row's) scale. */
+  scale?: number;
   entities: ControlConfig[];
   /** CSS width override. */
   width?: string;
@@ -176,6 +194,8 @@ export interface RowConfig {
   label?: string;
   /** Label style for this row's title. Falls back to the panel default. */
   label_style?: LabelStyle;
+  /** Size multiplier for this row, on top of the panel's scale. */
+  scale?: number;
 }
 
 export interface RetroControlPanelCardConfig extends LovelaceCardConfig {

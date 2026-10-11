@@ -123,6 +123,12 @@ export const panelStyles = css`
     display: flex;
     flex: 0 0 auto;
   }
+  /* A control keeps its size, but a group may be squeezed below its one-line
+     width: once it is alone on a line and still too wide, it shrinks and its
+     own controls wrap, the same way a row's do. */
+  .cell.group-cell {
+    flex-shrink: 1;
+  }
 
   /* ---- Row grouping frames ----
      A row-group wraps a row's (or nested group's) cells in a decorative frame

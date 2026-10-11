@@ -122,6 +122,7 @@ rows:
 | `group_style` | `none` \| `embossed` \| `screwed` \| `stencil`                  | `none`   | Frame around the row's controls: `embossed` = engraved outline, `screwed` = raised plate held by corner screws, `stencil` = painted corner brackets. |
 | `label`       | `string`                                                        | —        | Row title above the controls (inside the frame when there is one). A single space hides it. |
 | `label_style` | `etched` \| `dymo` \| `none`                                    | panel's `label_style` | Style of the row title.   |
+| `scale`       | `number`                                                        | `1`      | Size of this row relative to the panel; multiplies the card's `scale`. |
 
 ### `type: group`
 
@@ -135,6 +136,7 @@ spending a row on each. Groups can nest.
 | `group_style` | `none` \| `embossed` \| `screwed` \| `stencil`  | `none`   | Frame around the cluster, as for rows.           |
 | `label`       | `string`                                        | —        | Cluster title. A single space hides it.          |
 | `label_style` | `etched` \| `dymo` \| `none`                    | panel's `label_style` | Style of the cluster title.         |
+| `scale`       | `number`                                        | `1`      | Size of the cluster relative to its row.         |
 | `width` / `height` | CSS length                                 | —        | Size override for the cluster.                   |
 
 Groups have no entity or actions.
@@ -199,6 +201,7 @@ the fan.
 | `minimum_fraction_digits`  | `number`  | `0`     | Always render this many decimals (`number` mode).     |
 | `unit`                     | `string`  | entity's unit | Suffix shown to the right of the digits. A single space hides it. |
 | `color`                    | `amber` \| `green` \| `red` \| `white` \| `blue` | theme primary | Glow colour of the segments. |
+| `color_rules`              | list      | —       | Conditional colours — see below.                      |
 | `attribute`                | `string`  | see above | Read this attribute instead of the state.           |
 | `indicator`                | colour    | —       | Status LED beside the label (see above).              |
 
@@ -226,6 +229,40 @@ Assistant.
 - type: seven_segment
   display_mode: time        # no entity: a clock
 ```
+
+**Colour rules.** `color_rules` is a list tried top to bottom; the first rule that
+matches sets the colour, otherwise `color` applies.
+
+| Key      | Type     | Description                                                        |
+| -------- | -------- | ------------------------------------------------------------------ |
+| `color`  | colour   | Colour to use when the rule matches.                               |
+| `above`  | `number` | Matches when the value is greater than this.                       |
+| `below`  | `number` | Matches when the value is less than this.                          |
+| `entity` | `string` | Test this entity instead of the display's own value.               |
+
+With both bounds the value must lie between them; with neither, the rule matches
+any value. A number is compared as it is. A timestamp counts as the **minutes
+until it**, negative once it has passed, and that is the same whether the display
+shows the time or the countdown. So `below: 0` reads "has passed", and
+`above: 0` with `below: 10` reads "within the next ten minutes".
+
+Passed prayers red, the current one green, upcoming ones blue: each display
+names the next prayer, which is what tells "current" from "over".
+
+```yaml
+- type: seven_segment
+  entity: sensor.maghrib_prayer
+  display_mode: time              # or countdown, the rules are the same
+  color: blue                     # upcoming
+  color_rules:
+    - color: red                  # the next prayer has passed: this one is over
+      entity: sensor.isha_prayer
+      below: 0
+    - color: green                # this one has passed: it is the current one
+      below: 0
+```
+
+Colours change at the exact moment, from a timer in the browser.
 
 ### `type: vu_meter`
 
@@ -288,8 +325,13 @@ The panel is intentionally density-aware:
 
 - All sizes are defined in `em` and driven by a single `--retro-scale` variable
   (the `scale:` config key). Bumping `scale: 0.85` shrinks everything in
-  proportion — labels stay legible relative to the controls.
-- Each control has a sensible minimum size. Rows wrap if they don't fit.
+  proportion — labels stay legible relative to the controls. Rows and groups
+  take their own `scale` on top of that, e.g. a dense row of meters at `0.8`
+  under a full-size row of displays. Rows at different scales no longer line
+  up column by column.
+- Each control has a sensible minimum size. Rows wrap if they don't fit. Groups
+  move to the next line whole; a group that is still wider than the card then
+  wraps its own controls.
 - Use per-cell `width` / `height` overrides when you want a particular control
   to stretch or shrink — e.g. `width: 8em` on a 4-digit display to keep all
   rows aligned.

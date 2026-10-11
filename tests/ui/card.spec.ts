@@ -194,6 +194,33 @@ test.describe("retro-controlpanel-card (UI)", () => {
     // Indicator on the left = first child of the row.
     await expect(row.locator("retro-indicator")).toBeVisible();
   });
+
+  test("a group wraps its controls when the card is narrower than the group", async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 900 });
+    await page.evaluate(() => {
+      const display = { entity: "sensor.temperature_a", type: "seven_segment", num_digits: 4 };
+      (window as any).__retro.setConfig({
+        rows: [{ group_style: "screwed", entities: [
+          { type: "group", group_style: "embossed", label: "TIMES",
+            entities: [display, display, display, display, display] },
+        ] }],
+      });
+    });
+    const card = page.locator("retro-controlpanel-card");
+    const group = card.locator(".row-group.group-embossed");
+    await expect(group.locator("retro-seven-segment")).toHaveCount(5);
+
+    // The group stays inside the panel...
+    const panel = (await card.locator(".panel-inner").boundingBox())!;
+    const box = (await group.boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(panel.x);
+    expect(box.x + box.width).toBeLessThanOrEqual(panel.x + panel.width);
+    // ...because its displays wrapped onto more than one line.
+    const tops = await group.locator("retro-seven-segment").evaluateAll(
+      (els) => els.map((el) => Math.round(el.getBoundingClientRect().top)),
+    );
+    expect(new Set(tops).size).toBeGreaterThan(1);
+  });
 });
 
 // Separate suite: a touch-emulating context so we exercise the real

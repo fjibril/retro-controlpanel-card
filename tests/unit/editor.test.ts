@@ -211,6 +211,118 @@ describe("retro-controlpanel-card-editor", () => {
     expect(switched.attribute).toBeUndefined();
   });
 
+  it("keeps a row scale but drops the default of 1", async () => {
+    const { el } = await buildEditor();
+    toDispose.push(el);
+    const handler = vi.fn();
+    el.addEventListener("config-changed", handler);
+    const rowChange = (value: Record<string, unknown>) =>
+      (el as unknown as { _handleRowChange: (ri: number, ev: CustomEvent) => void })._handleRowChange(
+        0,
+        new CustomEvent("value-changed", { detail: { value } }),
+      );
+    const form = { justify: "center", group_style: "none", label: "", label_style: "" };
+
+    rowChange({ ...form, scale: 0.8 });
+    expect(handler.mock.calls[0][0].detail.config.rows[0].scale).toBe(0.8);
+
+    rowChange({ ...form, scale: 1 });
+    expect("scale" in handler.mock.calls[1][0].detail.config.rows[0]).toBe(false);
+  });
+
+  it("editing a group drops the default scale and keeps keys without a form field", async () => {
+    const hass = makeHass({});
+    const group = { type: "group" as const, width: "12em", scale: 0.9, entities: [{ type: "button" as const }] };
+    const el = await mount<RetroControlPanelCardEditor>("retro-controlpanel-card-editor", (n) => {
+      n.hass = hass;
+      n.setConfig({ type: "custom:retro-controlpanel-card", rows: [{ entities: [group] }] });
+    });
+    toDispose.push(el);
+    const handler = vi.fn();
+    el.addEventListener("config-changed", handler);
+    const editor = el as unknown as {
+      _entityFormData: (ent: unknown) => Record<string, unknown>;
+      _handleEntityChange: (path: number[], ev: CustomEvent) => void;
+    };
+
+    // ha-form hands back its data object with the edited field replaced.
+    const value = { ...editor._entityFormData(group), scale: 1 };
+    editor._handleEntityChange([0, 0], new CustomEvent("value-changed", { detail: { value } }));
+    const ent = handler.mock.calls[0][0].detail.config.rows[0].entities[0];
+    expect("scale" in ent).toBe(false);
+    expect(ent.width).toBe("12em");
+    expect(ent.entities).toHaveLength(1);
+  });
+
+  it("adds, edits, reorders and removes colour rules on a seven-segment display", async () => {
+    const { el } = await buildEditor(); // rows[1].entities[0] is the seven_segment
+    toDispose.push(el);
+    const editor = el as unknown as {
+      _addRule: (path: number[]) => void;
+      _removeRule: (path: number[], ri: number) => void;
+      _moveRule: (path: number[], ri: number, delta: number) => void;
+      _handleRuleChange: (path: number[], ri: number, ev: CustomEvent) => void;
+    };
+    // Feed each change back in, as Home Assistant does with config-changed.
+    let latest: any;
+    el.addEventListener("config-changed", (ev) => {
+      latest = (ev as CustomEvent).detail.config;
+      el.setConfig(latest);
+    });
+    const rules = () => latest.rows[1].entities[0].color_rules;
+
+    editor._addRule([1, 0]);
+    expect(rules()).toEqual([{ color: "red" }]);
+
+    // ha-form reports cleared fields as "" / undefined; they must not be saved.
+    editor._handleRuleChange([1, 0], 0, new CustomEvent("value-changed", {
+      detail: { value: { color: "green", entity: "", above: undefined, below: 0 } },
+    }));
+    expect(rules()).toEqual([{ color: "green", below: 0 }]);
+
+    editor._addRule([1, 0]);
+    editor._handleRuleChange([1, 0], 1, new CustomEvent("value-changed", {
+      detail: { value: { color: "red", entity: "sensor.next", below: 0 } },
+    }));
+    editor._moveRule([1, 0], 1, -1);
+    expect(rules()).toEqual([
+      { color: "red", entity: "sensor.next", below: 0 },
+      { color: "green", below: 0 },
+    ]);
+
+    editor._removeRule([1, 0], 0);
+    editor._removeRule([1, 0], 0);
+    expect("color_rules" in latest.rows[1].entities[0]).toBe(false);
+    // The rest of the display's config is untouched.
+    expect(latest.rows[1].entities[0].num_digits).toBe(4);
+  });
+
+  it("keeps colour rules when another field of the display is edited", async () => {
+    const hass = makeHass({});
+    const display = {
+      type: "seven_segment" as const,
+      entity: "sensor.temp",
+      color_rules: [{ color: "red" as const, above: 25 }],
+    };
+    const el = await mount<RetroControlPanelCardEditor>("retro-controlpanel-card-editor", (n) => {
+      n.hass = hass;
+      n.setConfig({ type: "custom:retro-controlpanel-card", rows: [{ entities: [display] }] });
+    });
+    toDispose.push(el);
+    const handler = vi.fn();
+    el.addEventListener("config-changed", handler);
+    const editor = el as unknown as {
+      _entityFormData: (ent: unknown) => Record<string, unknown>;
+      _handleEntityChange: (path: number[], ev: CustomEvent) => void;
+    };
+
+    const value = { ...editor._entityFormData(display), num_digits: 6 };
+    editor._handleEntityChange([0, 0], new CustomEvent("value-changed", { detail: { value } }));
+    const ent = handler.mock.calls[0][0].detail.config.rows[0].entities[0];
+    expect(ent.num_digits).toBe(6);
+    expect(ent.color_rules).toEqual([{ color: "red", above: 25 }]);
+  });
+
   it("exposes getConfigElement on the main card", async () => {
     // Imported lazily so the editor side-effect registers the tag.
     await import("../../src/retro-controlpanel-card.js");
