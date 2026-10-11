@@ -3,6 +3,7 @@ import "../../src/controls/retro-seven-segment.js";
 import type { RetroSevenSegment } from "../../src/controls/retro-seven-segment.js";
 import type { SevenSegmentConfig } from "../../src/types.js";
 import { clockTokens, wallTimeAt } from "../../src/controls/time-format.js";
+import { GLOW_PALETTE } from "../../src/controls/glow-palette.js";
 import { cleanup, makeHass, mount } from "./setup.js";
 
 const baseCfg: SevenSegmentConfig = {
@@ -302,5 +303,138 @@ describe("retro-seven-segment time modes", () => {
     expect(vi.getTimerCount() - before).toBe(1);
     cleanup(el);
     expect(vi.getTimerCount()).toBe(before);
+  });
+});
+
+describe("retro-seven-segment colour rules", () => {
+  let toDispose: HTMLElement[] = [];
+  afterEach(() => {
+    toDispose.forEach(cleanup);
+    toDispose = [];
+    vi.useRealTimers();
+  });
+
+  const fakeClock = (iso: string) => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    vi.setSystemTime(new Date(iso));
+  };
+  const segmentColor = (el: RetroSevenSegment) => el.style.getPropertyValue("--retro-segment-on");
+
+  // Five prayer times of one day, each display naming its successor so it can
+  // tell "current" (passed, next one hasn't) from "over" (next one passed too).
+  const PRAYERS: Record<string, string> = {
+    "sensor.fajr": "2026-10-11T06:04:00+00:00",
+    "sensor.dhuhr": "2026-10-11T13:08:00+00:00",
+    "sensor.asr": "2026-10-11T16:00:00+00:00",
+    "sensor.maghrib": "2026-10-11T18:38:00+00:00",
+    "sensor.isha": "2026-10-11T20:11:00+00:00",
+  };
+  const ORDER = Object.keys(PRAYERS);
+
+  async function buildPrayer(entity: string, mode: "time" | "countdown") {
+    const hass = makeHass(
+      Object.fromEntries(Object.entries(PRAYERS).map(([id, state]) => [id, { state }])),
+    );
+    Object.assign(hass, { config: { time_zone: "UTC" }, locale: { time_zone: "server" } });
+    const next = ORDER[ORDER.indexOf(entity) + 1];
+    const el = await mount<RetroSevenSegment>("retro-seven-segment", (n) => {
+      n.hass = hass;
+      n.config = {
+        type: "seven_segment",
+        entity,
+        display_mode: mode,
+        color: "blue",
+        color_rules: [
+          ...(next ? [{ color: "red" as const, entity: next, below: 0 }] : []),
+          { color: "green" as const, below: 0 },
+        ],
+      };
+    });
+    toDispose.push(el);
+    return el;
+  }
+
+  it("number mode: colours by the displayed value, else the configured colour", async () => {
+    const rules = { color: "green" as const, color_rules: [{ color: "red" as const, above: 25 }] };
+    const hot = await build(rules, "30");
+    const mild = await build(rules, "20");
+    toDispose.push(hot.el, mild.el);
+    expect(hot.el.effectiveColor()).toBe("red");
+    expect(segmentColor(hot.el)).toBe(GLOW_PALETTE.red.on);
+    expect(mild.el.effectiveColor()).toBe("green");
+    expect(segmentColor(mild.el)).toBe(GLOW_PALETTE.green.on);
+  });
+
+  it("a rule can test another entity's value", async () => {
+    const hass = makeHass({ "sensor.temp": { state: "21" }, "sensor.alarm_level": { state: "3" } });
+    const el = await mount<RetroSevenSegment>("retro-seven-segment", (n) => {
+      n.hass = hass;
+      n.config = { ...baseCfg, color_rules: [{ color: "red", entity: "sensor.alarm_level", above: 2 }] };
+    });
+    toDispose.push(el);
+    expect(el.effectiveColor()).toBe("red");
+  });
+
+  it("no rule matching and no colour set leaves the theme colour", async () => {
+    const { el } = await build({ color_rules: [{ color: "red", above: 25 }] }, "20");
+    toDispose.push(el);
+    expect(el.effectiveColor()).toBeUndefined();
+    expect(segmentColor(el)).toBe("");
+  });
+
+  for (const mode of ["time", "countdown"] as const) {
+    it(`${mode} mode: passed prayers red, the current one green, upcoming blue`, async () => {
+      // Maghrib passed 37 minutes ago, Isha is 55 minutes away.
+      fakeClock("2026-10-11T19:15:30Z");
+      const colors: Record<string, string | undefined> = {};
+      for (const entity of ORDER) colors[entity] = (await buildPrayer(entity, mode)).effectiveColor();
+      expect(colors).toEqual({
+        "sensor.fajr": "red",
+        "sensor.dhuhr": "red",
+        "sensor.asr": "red",
+        "sensor.maghrib": "green",
+        "sensor.isha": "blue",
+      });
+    });
+  }
+
+  it("a fixed time display wakes exactly when a rule's time is reached, and recolours", async () => {
+    fakeClock("2026-10-11T18:30:00Z"); // 8 minutes before Maghrib
+    const before = vi.getTimerCount();
+    const el = await buildPrayer("sensor.maghrib", "time");
+    expect(segmentColor(el)).toBe(GLOW_PALETTE.blue.on);
+    expect(vi.getTimerCount() - before).toBe(1);
+
+    // Nothing happens while it is still upcoming...
+    await vi.advanceTimersByTimeAsync(7 * 60_000);
+    await el.updateComplete;
+    expect(segmentColor(el)).toBe(GLOW_PALETTE.blue.on);
+
+    // ...it turns green as Maghrib arrives...
+    await vi.advanceTimersByTimeAsync(60_000 + 100);
+    await el.updateComplete;
+    expect(segmentColor(el)).toBe(GLOW_PALETTE.green.on);
+
+    // ...and red once Isha (the entity its first rule watches) has arrived,
+    // 93 minutes later - longer than a single timer, so it re-plans on the way.
+    await vi.advanceTimersByTimeAsync(93 * 60_000);
+    await el.updateComplete;
+    expect(segmentColor(el)).toBe(GLOW_PALETTE.red.on);
+    // Every bound is behind it now: no timer left running.
+    expect(vi.getTimerCount()).toBe(before);
+  });
+
+  it("rules on plain numbers schedule no timer", async () => {
+    fakeClock("2026-10-11T18:30:00Z");
+    const before = vi.getTimerCount();
+    const { el } = await build({ color_rules: [{ color: "red", above: 25 }] }, "30");
+    toDispose.push(el);
+    expect(vi.getTimerCount()).toBe(before);
+  });
+
+  it("an unknown colour name falls back to the theme colour instead of failing", async () => {
+    const { el } = await build({ color_rules: [{ color: "purple" as never }] }, "30");
+    toDispose.push(el);
+    expect(segmentColor(el)).toBe("");
   });
 });

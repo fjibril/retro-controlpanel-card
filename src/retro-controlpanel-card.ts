@@ -38,6 +38,17 @@ const KNOWN_TYPES = new Set([
   "group",
 ]);
 
+/**
+ * Inline font-size for a row or group `scale`. Every control is sized in em,
+ * so this multiplies onto the panel's (and any enclosing row's) scale. Empty
+ * when unset, 1 or not a positive number.
+ */
+function scaleStyle(scale: number | undefined): string {
+  return typeof scale === "number" && Number.isFinite(scale) && scale > 0 && scale !== 1
+    ? `font-size: ${scale}em;`
+    : "";
+}
+
 /** Recursive entity validation - groups carry their own entities array. */
 function validateEntities(entities: ControlConfig[], location: string): void {
   for (const [ei, ent] of entities.entries()) {
@@ -224,7 +235,7 @@ export class RetroControlPanelCard extends LitElement {
       defaultLabelStyle,
     );
     return html`
-      <div class="row" style="--row-justify: ${justify};">${content}</div>
+      <div class="row" style="--row-justify: ${justify}; ${scaleStyle(row.scale)}">${content}</div>
     `;
   }
 
@@ -295,7 +306,7 @@ export class RetroControlPanelCard extends LitElement {
           g.label_style,
           defaultLabelStyle,
         );
-        return html`<div class="cell">${inner}</div>`;
+        return html`<div class="cell group-cell" style=${scaleStyle(g.scale) || nothing}>${inner}</div>`;
       }
       case "seven_segment":
         return html`<div class="cell">

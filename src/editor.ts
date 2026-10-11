@@ -2,8 +2,10 @@ import { LitElement, html, css, nothing, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { HomeAssistant, LovelaceCardEditor } from "custom-card-helpers";
 import type {
+  ColorRule,
   ControlConfig,
   ControlType,
+  GlowColor,
   GroupConfig,
   RetroControlPanelCardConfig,
   RowConfig,
@@ -94,6 +96,12 @@ const GROUP_STYLE_OPTIONS = [
 
 type FormSchema = readonly unknown[];
 
+/** Size multiplier slider, shared by the panel, rows and groups. */
+const SCALE_FIELD = {
+  name: "scale",
+  selector: { number: { min: 0.5, max: 2, step: 0.05, mode: "slider" } },
+};
+
 const CARD_SCHEMA: FormSchema = [
   { name: "title", selector: { text: {} } },
   {
@@ -112,7 +120,7 @@ const CARD_SCHEMA: FormSchema = [
         options: [{ value: "", label: "(inherit label style)" }, ...LABEL_STYLE_OPTIONS],
         mode: "dropdown",
       } } },
-      { name: "scale", selector: { number: { min: 0.5, max: 2, step: 0.05, mode: "slider" } } },
+      SCALE_FIELD,
     ],
   },
 ];
@@ -134,6 +142,7 @@ const ROW_SCHEMA: FormSchema = [
       { name: "label_style", selector: { select: { options: LABEL_STYLE_INHERIT_OPTIONS, mode: "dropdown" } } },
     ],
   },
+  SCALE_FIELD,
 ];
 
 const COMMON_ENTITY_FIELDS: FormSchema = [
@@ -177,6 +186,20 @@ const SEVEN_SEGMENT_MODE_ROW = {
     { name: "show_seconds", selector: { boolean: {} } },
   ],
 };
+
+/** One conditional colour of a seven-segment display (see _renderColorRules). */
+const COLOR_RULE_SCHEMA: FormSchema = [
+  { name: "color",  selector: { select: { options: GLOW_COLOR_OPTIONS, mode: "dropdown" } } },
+  { name: "entity", selector: { entity: {} } },
+  {
+    type: "grid",
+    name: "",
+    schema: [
+      { name: "above", selector: { number: { mode: "box", step: "any" } } },
+      { name: "below", selector: { number: { mode: "box", step: "any" } } },
+    ],
+  },
+];
 
 /** Control types that can read a numeric attribute + show a status LED. */
 const NUMERIC_TYPES = new Set<ControlType>(["seven_segment", "vu_meter", "gauge"]);
@@ -321,6 +344,7 @@ const SCHEMAS_BY_TYPE: Record<ControlType, FormSchema> = {
       ],
     },
     { name: "label", selector: { text: {} } },
+    SCALE_FIELD,
   ],
 };
 
@@ -346,7 +370,7 @@ const VALID_KEYS_BY_TYPE: Record<ControlType, ReadonlySet<string>> = {
   ]),
   seven_segment: new Set([
     ...COMMON_KEYS,
-    "display_mode", "show_seconds",
+    "display_mode", "show_seconds", "color_rules",
     "num_digits", "leading_zeros", "maximum_fraction_digits",
     "minimum_fraction_digits", "unit", "color", "attribute", "indicator",
   ]),
@@ -364,7 +388,7 @@ const VALID_KEYS_BY_TYPE: Record<ControlType, ReadonlySet<string>> = {
     "attribute", "indicator",
   ]),
   group: new Set([
-    "type", "group_style", "label", "label_style", "entities", "width", "height",
+    "type", "group_style", "label", "label_style", "scale", "entities", "width", "height",
   ]),
 };
 
@@ -461,6 +485,14 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
       gap: 8px;
       padding: 4px 0 0 0;
     }
+    .rule-box {
+      border: 1px solid var(--divider-color);
+      border-radius: 6px;
+      padding: 0 8px 8px 12px;
+    }
+    .rules-hint {
+      font-size: 12px;
+    }
     .actions-bar {
       display: flex;
       gap: 8px;
@@ -523,6 +555,7 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
       group_style: row.group_style ?? "none",
       label: row.label ?? "",
       label_style: row.label_style ?? "",
+      scale: row.scale ?? 1,
     };
     const headerTitle = row.label?.trim()
       ? row.label.trim()
@@ -631,8 +664,69 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
             @value-changed=${(ev: CustomEvent) => this._handleEntityChange(path, ev)}
           ></ha-form>
           ${isGroup ? this._renderGroupChildren(ent as GroupConfig, path) : nothing}
+          ${ent.type === "seven_segment" ? this._renderColorRules(ent, path) : nothing}
         </div>
       </ha-expansion-panel>
+    `;
+  }
+
+  /**
+   * Conditional colours of a seven-segment display: an ordered list (the first
+   * matching rule wins), each rule its own small form with move / remove
+   * buttons.
+   */
+  private _renderColorRules(ent: SevenSegmentConfig, path: number[]): TemplateResult {
+    const rules = ent.color_rules ?? [];
+    return html`
+      <div class="group-children">
+        <div class="section-title" style="margin: 8px 0 0 0; font-size: 13px;">Color rules</div>
+        <div class="muted rules-hint">
+          The first matching rule sets the color; if none match, the color above applies.
+          Times count as minutes until the timestamp, negative once it has passed.
+        </div>
+        <div class="panel-list">
+          ${rules.map((rule, ri) => html`
+            <div class="rule-box">
+              <div class="entity-header">
+                <span class="header-title">Rule ${ri + 1}</span>
+                <div class="entity-actions">
+                  <ha-icon-button
+                    .disabled=${ri === 0}
+                    .label=${"Move up"}
+                    @click=${() => this._moveRule(path, ri, -1)}>
+                    <ha-icon icon="mdi:arrow-up"></ha-icon>
+                  </ha-icon-button>
+                  <ha-icon-button
+                    .disabled=${ri === rules.length - 1}
+                    .label=${"Move down"}
+                    @click=${() => this._moveRule(path, ri, 1)}>
+                    <ha-icon icon="mdi:arrow-down"></ha-icon>
+                  </ha-icon-button>
+                  <ha-icon-button
+                    .label=${"Remove rule"}
+                    @click=${() => this._removeRule(path, ri)}>
+                    <ha-icon icon="mdi:delete"></ha-icon>
+                  </ha-icon-button>
+                </div>
+              </div>
+              <ha-form
+                .hass=${this.hass}
+                .data=${rule}
+                .schema=${COLOR_RULE_SCHEMA}
+                .computeLabel=${this._computeLabel}
+                .computeHelper=${this._computeRuleHelper}
+                @value-changed=${(ev: CustomEvent) => this._handleRuleChange(path, ri, ev)}
+              ></ha-form>
+            </div>
+          `)}
+        </div>
+        <div class="actions-bar">
+          <mwc-button outlined @click=${() => this._addRule(path)}>
+            <ha-icon icon="mdi:plus" style="margin-right: 4px;"></ha-icon>
+            Add color rule
+          </mwc-button>
+        </div>
+      </div>
     `;
   }
 
@@ -695,16 +789,19 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
   /**
    * ha-form binds to the data object by name; missing keys render as empty.
    * For groups, we also seed label_style to "" so the inherit option is
-   * pre-selected rather than showing the first concrete option.
+   * pre-selected rather than showing the first concrete option. The rest of
+   * the group is spread in so keys without a form field (width / height)
+   * survive an edit.
    */
   private _entityFormData(ent: ControlConfig): Record<string, unknown> {
     if (ent.type === "group") {
       const g = ent as GroupConfig;
       return {
-        type: g.type,
+        ...g,
         group_style: g.group_style ?? "none",
         label: g.label ?? "",
         label_style: g.label_style ?? "",
+        scale: g.scale ?? 1,
       };
     }
     if (ent.type === "seven_segment") {
@@ -757,6 +854,9 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
     if (schema?.name === "group_style") {
       return "Decorative frame around this cluster's controls. Embossed = engraved outline; screwed = sub-panel with corner screws; stencil = painted L-brackets at the corners.";
     }
+    if (schema?.name === "scale") {
+      return "Size relative to the surrounding panel or row (1 = same size).";
+    }
     if (schema?.name === "label_style") {
       return "How this label is rendered. Leave on 'inherit' to follow the panel's label style.";
     }
@@ -806,6 +906,7 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
       if ((merged as { label_style?: string }).label_style === "") {
         delete (merged as Partial<RowConfig>).label_style;
       }
+      if (merged.scale === 1) delete (merged as Partial<RowConfig>).scale;
       return merged;
     });
     this._fireConfigChanged({ ...this._config, rows });
@@ -860,6 +961,7 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
     if ((next as { group_style?: string }).group_style === "none") {
       delete (next as { group_style?: string }).group_style;
     }
+    if (next.type === "group" && next.scale === 1) delete next.scale;
     if (next.type === "seven_segment") {
       const seg = next as SevenSegmentConfig;
       // An attribute picked for numbers means nothing for times (and vice
@@ -937,6 +1039,72 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
       return next;
     });
     this._fireConfigChanged({ ...this._config, rows: newRows });
+  };
+
+  // -- colour rules (seven-segment) ------------------------------------------
+
+  private _computeRuleHelper = (schema: { name?: string }): string => {
+    if (schema?.name === "entity") {
+      return "Optional. Test this entity instead of the display's own value.";
+    }
+    if (schema?.name === "above") {
+      return "Matches when the value is greater than this.";
+    }
+    if (schema?.name === "below") {
+      return "Matches when the value is less than this. For a time, 0 means it has passed.";
+    }
+    return "";
+  };
+
+  private _rulesAt(path: number[]): ColorRule[] {
+    const ent = getEntityAt(this._config!.rows, path) as SevenSegmentConfig;
+    return ent.color_rules ?? [];
+  }
+
+  /** Replace the rule list of the display at `path`; an empty list removes the key. */
+  private _setRules(path: number[], rules: ColorRule[]): void {
+    if (!this._config) return;
+    const ei = path[path.length - 1];
+    const newRows = updateRowEntities(this._config.rows, path.slice(0, -1), (entities) =>
+      entities.map((e, idx) => {
+        if (idx !== ei) return e;
+        const next = { ...e } as SevenSegmentConfig;
+        if (rules.length > 0) next.color_rules = rules;
+        else delete next.color_rules;
+        return next;
+      }),
+    );
+    this._fireConfigChanged({ ...this._config, rows: newRows });
+  }
+
+  private _addRule = (path: number[]) => {
+    if (!this._config) return;
+    this._setRules(path, [...this._rulesAt(path), { color: "red" }]);
+  };
+
+  private _removeRule = (path: number[], ri: number) => {
+    if (!this._config) return;
+    this._setRules(path, this._rulesAt(path).filter((_, idx) => idx !== ri));
+  };
+
+  private _moveRule = (path: number[], ri: number, delta: number) => {
+    if (!this._config) return;
+    const rules = [...this._rulesAt(path)];
+    const target = ri + delta;
+    if (target < 0 || target >= rules.length) return;
+    [rules[ri], rules[target]] = [rules[target], rules[ri]];
+    this._setRules(path, rules);
+  };
+
+  private _handleRuleChange = (path: number[], ri: number, ev: CustomEvent) => {
+    if (!this._config) return;
+    const value = ev.detail.value as Record<string, unknown>;
+    // Rebuild the rule from scratch so cleared fields don't linger as "" / null.
+    const rule: ColorRule = { color: (value.color as GlowColor) || "red" };
+    if (typeof value.entity === "string" && value.entity) rule.entity = value.entity;
+    if (typeof value.above === "number" && Number.isFinite(value.above)) rule.above = value.above;
+    if (typeof value.below === "number" && Number.isFinite(value.below)) rule.below = value.below;
+    this._setRules(path, this._rulesAt(path).map((r, idx) => (idx === ri ? rule : r)));
   };
 
   private _fireConfigChanged(config: RetroControlPanelCardConfig) {

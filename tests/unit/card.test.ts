@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import "../../src/retro-controlpanel-card.js";
 import type { RetroControlPanelCard } from "../../src/retro-controlpanel-card.js";
+import type { RowConfig } from "../../src/types.js";
 import { cleanup, makeHass, mount } from "./setup.js";
 
 const sampleConfig = {
@@ -229,6 +230,11 @@ describe("retro-controlpanel-card rendering", () => {
     expect(el.shadowRoot?.querySelector(".row-group.group-embossed")).not.toBeNull();
     expect(el.shadowRoot?.querySelector("retro-flip-switch")).not.toBeNull();
     expect(el.shadowRoot?.querySelector("retro-button")).not.toBeNull();
+    // Only the group's own cell is shrinkable (so its contents can wrap);
+    // the controls inside keep rigid cells.
+    const groupCells = el.shadowRoot?.querySelectorAll(".cell.group-cell") ?? [];
+    expect(groupCells.length).toBe(1);
+    expect(groupCells[0].querySelector(".row-group.group-embossed")).not.toBeNull();
   });
 
   it("setConfig rejects a group entity without an entities array", async () => {
@@ -248,6 +254,44 @@ describe("retro-controlpanel-card rendering", () => {
         ],
       }),
     ).toThrow(/group must have an 'entities' array/);
+  });
+
+  async function buildRows(rows: RowConfig[]) {
+    const hass = makeHass({ "input_boolean.toggle": { state: "on" } });
+    const el = await mount<RetroControlPanelCard>("retro-controlpanel-card", (n) => {
+      n.setConfig({ ...sampleConfig, rows });
+      n.hass = hass;
+    });
+    toDispose.push(el);
+    await el.updateComplete;
+    return el;
+  }
+  const flip = { type: "flip_switch" as const, entity: "input_boolean.toggle" };
+
+  it("a row scale sizes that row's font, multiplying the panel scale", async () => {
+    const el = await buildRows([{ scale: 0.8, entities: [flip] }, { entities: [flip] }]);
+    const rows = el.shadowRoot!.querySelectorAll<HTMLElement>(".row");
+    expect(rows[0].getAttribute("style")).toContain("font-size: 0.8em");
+    expect(rows[1].getAttribute("style")).not.toContain("font-size");
+  });
+
+  it("a group scale sizes the group's cell", async () => {
+    const el = await buildRows([
+      { entities: [{ type: "group", scale: 1.5, entities: [flip] }, flip] },
+    ]);
+    const groupCell = el.shadowRoot!.querySelector<HTMLElement>(".row > .cell");
+    expect(groupCell?.getAttribute("style")).toContain("font-size: 1.5em");
+  });
+
+  it("ignores a scale of 1 or a non-positive scale", async () => {
+    const el = await buildRows([
+      { scale: 1, entities: [flip] },
+      { scale: 0, entities: [{ type: "group", scale: -2, entities: [flip] }] },
+    ]);
+    for (const row of el.shadowRoot!.querySelectorAll<HTMLElement>(".row")) {
+      expect(row.getAttribute("style")).not.toContain("font-size");
+    }
+    expect(el.shadowRoot!.querySelector(".row > .cell")?.hasAttribute("style")).toBe(false);
   });
 
   it("applies scale via CSS custom property when configured", async () => {

@@ -24,7 +24,12 @@ const PLAIN_RE = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/;
 const MAX_HOURS = 99;
 
 /** Ticks land just past each boundary so the new value is already current. */
-const FLIP_MARGIN_MS = 25;
+export const FLIP_MARGIN_MS = 25;
+
+/** A point in time read from an entity: an absolute instant or a bare wall time. */
+export type TimeTarget =
+  | { kind: "instant"; ms: number }
+  | { kind: "wall"; t: WallTime };
 
 /** Epoch ms for an ISO-style datetime string (HA timestamp sensors), else null. */
 export function parseIsoInstant(v: unknown): number | null {
@@ -76,6 +81,25 @@ export function wallTimeAt(ms: number, timeZone?: string): WallTime {
     Number(parts.find((p) => p.type === type)?.value ?? 0);
   // Some engines report midnight as hour 24 even with h23.
   return { h: get("hour") % 24, m: get("minute"), s: get("second") };
+}
+
+/** An ISO timestamp or bare HH:MM[:SS] value as a time target, else null. */
+export function parseTimeTarget(v: unknown): TimeTarget | null {
+  const ms = parseIsoInstant(v);
+  if (ms !== null) return { kind: "instant", ms };
+  const t = parsePlainTime(v);
+  return t ? { kind: "wall", t } : null;
+}
+
+/**
+ * Milliseconds from `now` until the target, negative once it has passed. A
+ * bare wall time is taken as today in `timeZone`.
+ */
+export function msUntil(target: TimeTarget, now: number, timeZone?: string): number {
+  if (target.kind === "instant") return target.ms - now;
+  const wholeSeconds = secondsOfDay(target.t) - secondsOfDay(wallTimeAt(now, timeZone));
+  // wallTimeAt drops the sub-second part of now; zone offsets are whole seconds.
+  return wholeSeconds * 1000 - (((now % 1000) + 1000) % 1000);
 }
 
 const two = (n: number): string[] => [...String(n).padStart(2, "0")];

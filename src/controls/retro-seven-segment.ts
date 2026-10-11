@@ -1,39 +1,42 @@
 import { html, css, nothing } from "lit";
 import { customElement } from "lit/decorators.js";
 import { RetroControlBase } from "./retro-control-base.js";
-import type { GlowColor, SevenSegmentConfig } from "./../types.js";
+import type { ColorRule, GlowColor, SevenSegmentConfig } from "./../types.js";
 import { actionHandler, hasAction } from "./../action-handler-directive.js";
+import { matchColorRule, nextRuleBoundary } from "./color-rules.js";
 import { GLOW_PALETTE } from "./glow-palette.js";
 import { digitSvg } from "./segment-shapes.js";
 import {
+  FLIP_MARGIN_MS,
   clockTokens,
   countdownTokens,
   isTimeMode,
+  msUntil,
   nextFlipDelay,
-  parseIsoInstant,
-  parsePlainTime,
+  parseTimeTarget,
   secondsOfDay,
   wallTimeAt,
-  type WallTime,
+  type TimeTarget,
 } from "./time-format.js";
 import "./retro-label.js";
 import "./retro-indicator.js";
 
 /** Where a time mode gets its time from. */
-type TimeSource =
-  | { kind: "now" }
-  | { kind: "instant"; ms: number }
-  | { kind: "wall"; t: WallTime };
+type TimeSource = { kind: "now" } | TimeTarget;
+
+/** Longest single timer. Far-off wake-ups are re-planned hourly, which also
+    keeps the delay well inside what setTimeout can represent. */
+const MAX_TIMER_MS = 3_600_000;
 
 /**
  * Classic 7-segment LED display. Renders one SVG per digit, plus optional
  * decimal points and a minus sign. All segments are present in the DOM at low
  * opacity to give the authentic "ghost segment" look.
  *
- * In the time modes (clock / countdown) the display ticks on a local timer
- * that fires only when the shown value actually changes - once a second with
- * seconds shown, once a minute without. Ticks just re-render; they never talk
- * to Home Assistant.
+ * A local timer wakes the display only when something it shows is due to
+ * change: a clock or countdown digit (once a second with seconds shown, once
+ * a minute without), or a colour rule reaching one of its time bounds. Ticks
+ * just re-render; they never talk to Home Assistant.
  */
 @customElement("retro-seven-segment")
 export class RetroSevenSegment extends RetroControlBase {
@@ -42,6 +45,7 @@ export class RetroSevenSegment extends RetroControlBase {
   private tickTimer?: ReturnType<typeof setTimeout>;
   /** The "now" the last render used, so the next tick is scheduled from it. */
   private renderedAt = 0;
+  private appliedColor?: GlowColor;
 
   static styles = css`
     :host {
@@ -177,7 +181,13 @@ export class RetroSevenSegment extends RetroControlBase {
 
   protected updated(changed: Map<string, unknown>): void {
     super.updated(changed);
-    if (changed.has("config")) this.applyColorOverride(this.config?.color);
+    // Rules can change the colour on any state update or tick, not only when
+    // the config changes.
+    const color = this.effectiveColor(this.renderedAt || Date.now());
+    if (color !== this.appliedColor) {
+      this.applyColorOverride(color);
+      this.appliedColor = color;
+    }
     this.scheduleTick();
   }
 
@@ -216,16 +226,59 @@ export class RetroSevenSegment extends RetroControlBase {
   }
 
   private applyColorOverride(color: GlowColor | undefined): void {
-    if (!color) {
+    const p = color ? GLOW_PALETTE[color] : undefined;
+    if (!p) {
       this.style.removeProperty("--retro-segment-on");
       this.style.removeProperty("--retro-segment-off");
       this.style.removeProperty("--retro-segment-glow");
       return;
     }
-    const p = GLOW_PALETTE[color];
     this.style.setProperty("--retro-segment-on", p.on);
     this.style.setProperty("--retro-segment-off", p.off);
     this.style.setProperty("--retro-segment-glow", `0 0 0.18em ${p.on}`);
+  }
+
+  /** The colour in effect at `now`: the first matching colour rule, else `color`. */
+  effectiveColor(now: number = Date.now()): GlowColor | undefined {
+    const cfg = this.config;
+    if (!cfg) return undefined;
+    const tz = this.displayTimeZone();
+    const fromRule = matchColorRule(
+      cfg.color_rules,
+      (rule) => this.ruleOperand(rule, now, tz)?.value ?? null,
+    );
+    return fromRule ?? cfg.color;
+  }
+
+  /**
+   * What a colour rule tests: the entity it names, or else this display's own
+   * value. A timestamp counts as the minutes until it and also reports `ms`,
+   * the exact time left, so the display can wake when a bound is reached.
+   */
+  private ruleOperand(
+    rule: ColorRule,
+    now: number,
+    tz: string | undefined,
+  ): { value: number; ms: number | null } | null {
+    const timed = (target: TimeTarget) => {
+      const ms = msUntil(target, now, tz);
+      return { value: ms / 60_000, ms };
+    };
+    if (rule.entity) {
+      const state = this.hass?.states[rule.entity]?.state;
+      if (state === undefined) return null;
+      const text = String(state).trim();
+      const n = text === "" ? NaN : Number(text);
+      if (Number.isFinite(n)) return { value: n, ms: null };
+      const target = parseTimeTarget(text);
+      return target ? timed(target) : null;
+    }
+    if (isTimeMode(this.config.display_mode)) {
+      const src = this.timeSource();
+      return src && src.kind !== "now" ? timed(src) : null;
+    }
+    const value = this.resolvedValue();
+    return value === null ? null : { value, ms: null };
   }
 
   /** A token is a digit/letter ("0"-"9", "-", " "), "." for a DP or ":" for a colon. */
@@ -270,18 +323,13 @@ export class RetroSevenSegment extends RetroControlBase {
     const s = this.stateObj;
     if (!s) return null;
     const raw = this.config.attribute ? s.attributes?.[this.config.attribute] : s.state;
-    const ms = parseIsoInstant(raw);
-    if (ms !== null) return { kind: "instant", ms };
-    const t = parsePlainTime(raw);
-    return t ? { kind: "wall", t } : null;
+    return parseTimeTarget(raw);
   }
 
   /** Seconds from now until the target (negative once past), or null. */
   private countdownSeconds(src: TimeSource | null, now: number, tz: string | undefined): number | null {
     if (!src || src.kind === "now") return null;
-    if (src.kind === "instant") return (src.ms - now) / 1000;
-    // A bare wall time is taken as today in the display time zone.
-    return secondsOfDay(src.t) - secondsOfDay(wallTimeAt(now, tz));
+    return msUntil(src, now, tz) / 1000;
   }
 
   /**
@@ -313,14 +361,25 @@ export class RetroSevenSegment extends RetroControlBase {
 
   private scheduleTick(): void {
     this.clearTick();
-    if (!this.isConnected) return;
+    if (!this.isConnected || !this.config) return;
+    const now = this.renderedAt || Date.now();
+    let delay: number | null = null;
+
     const plan = this.tickPlan();
-    if (!plan) return;
-    const delay = nextFlipDelay(this.renderedAt || Date.now(), plan.anchor, plan.period);
+    if (plan) delay = nextFlipDelay(now, plan.anchor, plan.period);
+
+    const tz = this.displayTimeZone();
+    const boundary = nextRuleBoundary(
+      this.config.color_rules,
+      (rule) => this.ruleOperand(rule, now, tz)?.ms ?? null,
+    );
+    if (boundary !== null) delay = Math.min(delay ?? Infinity, boundary + FLIP_MARGIN_MS);
+
+    if (delay === null) return;
     this.tickTimer = setTimeout(() => {
       this.tickTimer = undefined;
       this.requestUpdate();
-    }, delay);
+    }, Math.min(delay, MAX_TIMER_MS));
   }
 
   private clearTick(): void {
