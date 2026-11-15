@@ -10,8 +10,10 @@
 # ---------- deps: install node_modules (cached unless package.json changes) ----------
 # Alpine + current Node LTS: far smaller package set than Debian, so far fewer
 # OS CVEs. This is a build-only image - the shipped artifact is a plain JS file
-# (see the `export` stage), so nothing from here is deployed.
-FROM node:22-alpine AS deps
+# (see the `export` stage), so nothing from here is deployed. Keep the major
+# in step with node-version in .github/workflows/release.yml (and ideally with
+# the Node the Playwright image below ships - 26 as of v1.65.1).
+FROM node:26-alpine AS deps
 WORKDIR /app
 # Don't pull Playwright browsers during install: they're glibc builds that
 # wouldn't run on Alpine, and they go unused anyway - the test-ui stage gets
@@ -57,13 +59,17 @@ COPY --from=test /app/reports /
 # IMPORTANT: this image tag and the @playwright/test version in package.json
 # MUST move together - a mismatch means the installed client looks for a
 # browser revision the image doesn't ship, and every test fails at launch.
-FROM mcr.microsoft.com/playwright:v1.60.0-noble AS test-ui
+# The OS suffix (-resolute = Ubuntu 26.04) should match `runs-on` in
+# .github/workflows/release.yml so local runs and CI use the same Ubuntu.
+FROM mcr.microsoft.com/playwright:v1.65.1-resolute AS test-ui
 WORKDIR /app
 COPY --from=deps  /app/node_modules ./node_modules
 COPY --from=build /app/dist         ./dist
 COPY package.json playwright.config.ts ./
 COPY src ./src
 COPY tests ./tests
+# tools/serve-static.mjs is the web server Playwright starts (npm run serve:ui).
+COPY tools ./tools
 # Same pattern as the unit-test stage: never fail the build, capture the real
 # exit code so the HTML/JUnit reports can be extracted even on failure.
 RUN mkdir -p reports && sh -c 'npm run test:ui; echo $? > reports/exitcode'

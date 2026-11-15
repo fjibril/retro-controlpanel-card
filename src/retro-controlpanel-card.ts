@@ -377,7 +377,6 @@ if (!window.customCards.some((c) => c.type === CARD_TAG)) {
 }
 
 // Friendly banner in the browser console, matching HA-card convention.
-// eslint-disable-next-line no-console
 console.info(
   `%c ${CARD_NAME} %c v${CARD_VERSION} `,
   "color: #1a120a; background: #ffa033; font-weight: 700;",

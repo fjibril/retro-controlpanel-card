@@ -238,7 +238,6 @@ describe("retro-controlpanel-card rendering", () => {
   });
 
   it("setConfig rejects a group entity without an entities array", async () => {
-    const hass = makeHass({});
     const el = document.createElement("retro-controlpanel-card") as RetroControlPanelCard;
     toDispose.push(el);
     expect(() =>
