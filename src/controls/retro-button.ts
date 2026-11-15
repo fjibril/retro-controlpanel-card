@@ -29,6 +29,10 @@ export class RetroButton extends RetroControlBase {
       width: var(--cell-w, auto);
       height: var(--cell-h, auto);
     }
+    /* A table cell: the button alone. */
+    :host([compact]) retro-label {
+      display: none;
+    }
     button.btn {
       position: relative;
       min-width: 3.6em;

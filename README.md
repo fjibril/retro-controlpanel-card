@@ -1,6 +1,6 @@
 # Retro Control Panel Card
 
-A Home Assistant Lovelace **custom card** that renders any handful of entities
+A Home Assistant **custom dashboard card** that renders any handful of entities
 as a chunky, retro-futurist control panel — the kind you'd find in a 1960s
 spy-movie villain lair, an old aircraft cockpit or a Cold-War submarine
 console.
@@ -16,7 +16,10 @@ Comes with:
 - **Seven-segment** numeric displays — leading zeros, fraction digits,
   selectable glow colour, and a unit pulled from the entity (etched/Dymo).
   Can also show a timestamp (`HH:MM`), a countdown / time since, or run as a
-  clock, with optional seconds.
+  clock, with optional seconds. Text states are spelled out in segment
+  letters (`HEAt`, `OFF`).
+- **Tables** — dense matrices of readouts, switches, buttons, meters or gauges
+  with row labels and column headers, sized by a single slider.
 - **VU meter** — segmented LED bar, vertical or horizontal, configurable
   green/yellow/red bands, with an optional engraved scale.
 - **Analog gauge** — half-disc dial set into the panel, sweeping needle, tick
@@ -35,12 +38,21 @@ Comes with:
 
 ## Installation
 
-### HACS (recommended)
+[![Open your Home Assistant instance and show this card in the Marketplace or HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=fjibril&repository=retro-controlpanel-card)
 
-1. In HACS → *Frontend* → ⋮ → **Custom repositories** add this repo's URL
-   (category: *Lovelace*).
-2. Install **Retro Control Panel Card**.
-3. Add the resource to your dashboard if HACS does not do it automatically:
+### Marketplace (Home Assistant 2026.11 and later)
+
+1. Go to **Settings → Marketplace** and search for **Retro Control Panel Card**.
+2. Open it, select **Install**, and confirm with **Install**.
+3. Reload your browser. The Marketplace adds the dashboard resource itself; if
+   you manage dashboard resources in YAML, add the one the install dialog shows.
+
+### HACS (before Home Assistant 2026.11)
+
+1. Open **HACS** and search for **Retro Control Panel Card**.
+2. Open it and select **Download**.
+3. Reload your browser. HACS adds the dashboard resource itself; if you manage
+   dashboard resources in YAML, add it yourself:
    ```yaml
    url: /hacsfiles/retro-controlpanel-card/retro-controlpanel-card.js
    type: module
@@ -48,7 +60,8 @@ Comes with:
 
 ### Manual
 
-1. Download `dist/retro-controlpanel-card.js` from the latest release.
+1. Download `retro-controlpanel-card.js` from the
+   [latest release](https://github.com/fjibril/retro-controlpanel-card/releases/latest).
 2. Drop it into `<config>/www/`.
 3. *Settings → Dashboards → ⋮ → Resources*:
    ```yaml
@@ -123,6 +136,7 @@ rows:
 | `label`       | `string`                                                        | —        | Row title above the controls (inside the frame when there is one). A single space hides it. |
 | `label_style` | `etched` \| `dymo` \| `none`                                    | panel's `label_style` | Style of the row title.   |
 | `scale`       | `number`                                                        | `1`      | Size of this row relative to the panel; multiplies the card's `scale`. |
+| `fill_width`  | `boolean`                                                       | `false`  | Stretch the row's frame across the whole panel rather than hugging its controls. |
 
 ### `type: group`
 
@@ -137,6 +151,7 @@ spending a row on each. Groups can nest.
 | `label`       | `string`                                        | —        | Cluster title. A single space hides it.          |
 | `label_style` | `etched` \| `dymo` \| `none`                    | panel's `label_style` | Style of the cluster title.         |
 | `scale`       | `number`                                        | `1`      | Size of the cluster relative to its row.         |
+| `fill_width`  | `boolean`                                       | `false`  | Grow into the rest of its line, sharing it with other groups that fill. |
 | `width` / `height` | CSS length                                 | —        | Size override for the cluster.                   |
 
 Groups have no entity or actions.
@@ -161,7 +176,7 @@ rows:
 
 ### Common control keys
 
-Every control type except `group` accepts the following:
+Every control type except `group` and `table` accepts the following:
 
 | Key                 | Type                          | Description                                                          |
 | ------------------- | ----------------------------- | -------------------------------------------------------------------- |
@@ -170,7 +185,7 @@ Every control type except `group` accepts the following:
 | `label`             | `string`                      | Override the label (default: `friendly_name` or entity id). A single space hides it. |
 | `width`             | CSS length                    | Hard width override for that cell.                                   |
 | `height`            | CSS length                    | Hard height override for that cell.                                  |
-| `tap_action`        | action object                 | `{action: toggle\|more-info\|navigate\|url\|call-service\|none, …}` like other HA cards. Default: toggle for switch-like entities, press/run for buttons, scripts and scenes, more-info otherwise. |
+| `tap_action`        | action object                 | `{action: toggle\|more-info\|navigate\|url\|perform-action\|none, …}` like other HA cards (`call-service` still works too; `assist` isn't supported). Default: toggle for switch-like entities, press/run for buttons, scripts and scenes, more-info otherwise. |
 | `hold_action`       | action object                 | Long-press action. Default: `more-info` (details and history).       |
 | `double_tap_action` | action object                 | Double-tap action. Default: none.                                    |
 
@@ -206,11 +221,17 @@ the fan.
 | `indicator`                | colour    | —       | Status LED beside the label (see above).              |
 
 Overflow renders as a row of dashes (`----`); `unknown` / `unavailable` also render
-as dashes.
+as dashes. A text state (or text `attribute`, such as a climate's `hvac_action`)
+is spelled out in segment letters, cut to fit: `heating` on four digits reads
+`HEAt`.
+
+`maximum_fraction_digits` only rounds, so 23.0 still shows as `23`. To always show
+the decimal, set `minimum_fraction_digits` to the same value.
 
 **Time modes.** The entity's state (or `attribute`) must be a timestamp, such as the
-[Islamic Prayer Times](https://www.home-assistant.io/integrations/islamic_prayer_times)
-sensors or `sun.sun`'s `next_rising`, or a plain `HH:MM` like `sensor.time`.
+[Sun](https://www.home-assistant.io/integrations/sun) integration's
+`sensor.sun_next_setting` or `sun.sun`'s `next_rising`, or a plain `HH:MM` like
+`sensor.time`.
 
 - `time` shows it as `HH:MM`. **Leave out the entity and it's a clock** showing the
   current time.
@@ -223,7 +244,7 @@ Assistant.
 
 ```yaml
 - type: seven_segment
-  entity: sensor.dhuhr_prayer
+  entity: sensor.sun_next_setting
   display_mode: countdown
   show_seconds: true        # 02:14:22 … then -00:05:09 once it has passed
 - type: seven_segment
@@ -246,19 +267,20 @@ until it**, negative once it has passed, and that is the same whether the displa
 shows the time or the countdown. So `below: 0` reads "has passed", and
 `above: 0` with `below: 10` reads "within the next ten minutes".
 
-Passed prayers red, the current one green, upcoming ones blue: each display
-names the next prayer, which is what tells "current" from "over".
+A day's timetable, say school periods: past ones red, the current one green,
+upcoming ones blue. Each display names the next period's start, which is what
+tells "current" from "over".
 
 ```yaml
 - type: seven_segment
-  entity: sensor.maghrib_prayer
+  entity: sensor.period_3_start
   display_mode: time              # or countdown, the rules are the same
   color: blue                     # upcoming
   color_rules:
-    - color: red                  # the next prayer has passed: this one is over
-      entity: sensor.isha_prayer
+    - color: red                  # the next period has started: this one is over
+      entity: sensor.period_4_start
       below: 0
-    - color: green                # this one has passed: it is the current one
+    - color: green                # this one has started: it is the current one
       below: 0
 ```
 
@@ -319,6 +341,105 @@ For *stateless* entities (`script`, `input_button`, `button`, `scene`) the
 button briefly flashes on press; for stateful entities it stays lit while the
 entity is on.
 
+### `type: table`
+
+A dense matrix of controls: column headers on top, row labels on the left, a
+compact control in every cell. Seven-segment readouts make an environment
+overview; flip switches or buttons make a switchboard with a row per room.
+
+| Key             | Type      | Default         | Description                                          |
+| --------------- | --------- | --------------- | ---------------------------------------------------- |
+| `cell_type`     | `seven_segment` \| `vu_meter` \| `gauge` \| `flip_switch` \| `button` | `seven_segment` | What the cells are. |
+| `scale`         | `number`  | `1`             | Size of the whole table; one slider for everything.  |
+| `equal_columns` | `boolean` | `false`         | Make every column as wide as the widest one.         |
+| `columns`       | list      | —               | One entry per column: `header`, `group`, plus settings for its cells. |
+| `rows`          | list      | required        | One entry per row: `label`, `group`, `cells`, plus settings for its cells. |
+
+- **Settings:** columns and rows take any setting of the cell type, as listed in
+  that control's section above (`num_digits` or `display_mode` for displays,
+  `indicator` for switches, `min` / `max` for gauges, …), and the tap / hold /
+  double-tap actions. A cell takes its column's settings, then its row's, then
+  its own: the row wins over the column, the cell over both.
+- **Mixing types (YAML only):** a column, row or cell can set its own `type`, in
+  the same order: the cell's wins, then the row's, then the column's, then
+  `cell_type`. That gives you a row of flip switches above a row of buttons.
+  Settings meant for another type are ignored, so keep each row's or column's
+  settings to its own type.
+- **Headers** are usually units like `°C`, and keep their case.
+- **Groups:** neighbouring columns with the same `group` share one heading, a
+  bracket drawn across them above their headers. Neighbouring rows with the same
+  `group` share one name, left of a bracket that spans them. Use them for rooms,
+  say, so the headers or labels only need to tell the sensors apart. A column or
+  row without a group simply has none.
+- **Cells** are listed one per column. Each is an entity id, an object with an
+  `entity` plus any settings, or `null` for an empty cell.
+- **Compact:** a cell shows the control without its label, since the row label
+  and header name it. Indicator LEDs stay: beside a switch or display, under a
+  meter or gauge. A cell that also shows a value readout or an LED lines up with
+  its neighbours at the top.
+- **In a table** a seven-segment cell shows no unit (set `unit` to show one
+  beside each value), and a VU meter lies down unless you set
+  `orientation: vertical`.
+- **Touch:** a cell reacts like the control it is (toggle for a switch,
+  more-info for a sensor, long press for more-info), unless its settings give it
+  other actions.
+
+```yaml
+- type: table
+  scale: 0.9
+  columns:
+    - header: "°C"
+      num_digits: 3
+      minimum_fraction_digits: 1
+      maximum_fraction_digits: 1
+    - header: "RH %"
+      num_digits: 3
+  rows:
+    - label: LIVING
+      cells: [sensor.living_temperature, sensor.living_humidity]
+    - label: OUTSIDE
+      color: blue                                           # the whole row
+      cells: [sensor.outside_temperature, sensor.outside_humidity]
+    - label: RADIATOR
+      cells:
+        - climate.radiator                                  # current temperature
+        - { entity: climate.radiator, attribute: hvac_action, num_digits: 4 }   # HEAt
+- type: table
+  cell_type: flip_switch
+  equal_columns: true
+  columns:
+    - header: LIGHT
+      indicator: green
+    - header: FAN
+  rows:
+    - label: LIVING
+      cells: [light.living, fan.living]
+    - label: BEDROOM
+      cells: [light.bedroom, fan.bedroom]
+    - label: SCENES
+      type: button                                          # a row of buttons below
+      cells:
+        - { entity: scene.evening, text: EVE }
+        - { entity: scene.night, text: NIGHT }
+- type: table                                               # rooms over their sensors
+  equal_columns: true
+  columns:
+    - { group: LIVING,  header: AIRBOX }
+    - { group: LIVING,  header: T/H 01 }
+    - { group: KITCHEN, header: T/H 03 }
+    - { group: KITCHEN, header: TEMP/RH }
+  rows:
+    - label: "°C"
+      cells: [sensor.airbox_temperature, sensor.living_temperature, sensor.kitchen_temperature, sensor.kitchen_rh_temperature]
+    - label: "RH %"
+      cells: [sensor.airbox_humidity, sensor.living_humidity, sensor.kitchen_humidity, sensor.kitchen_rh_humidity]
+```
+
+The editor sets the cell type, column width and size. Per column and row it
+sets the header or label, the group, and the settings of that type, folded away.
+A column or row with its own `type` in YAML gets that type's settings there; the
+type itself, settings for a single cell and colour rules go in YAML.
+
 ## Layout tips
 
 The panel is intentionally density-aware:
@@ -332,6 +453,12 @@ The panel is intentionally density-aware:
 - Each control has a sensible minimum size. Rows wrap if they don't fit. Groups
   move to the next line whole; a group that is still wider than the card then
   wraps its own controls.
+- A frame hugs its controls while they fit on one line. Once they wrap it is as
+  wide as its parent: the browser sizes the frame before its controls wrap, and
+  doesn't shrink it back to the longest line afterwards. `fill_width: true` makes
+  the full width the rule: a row's frame always spans the panel, and groups that
+  fill share their line between them, so wrapped lines come out even. In a
+  filled frame the row's `justify` places the controls.
 - Use per-cell `width` / `height` overrides when you want a particular control
   to stretch or shrink — e.g. `width: 8em` on a 4-digit display to keep all
   rows aligned.

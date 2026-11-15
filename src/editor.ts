@@ -10,6 +10,12 @@ import type {
   RetroControlPanelCardConfig,
   RowConfig,
   SevenSegmentConfig,
+  TableCellConfig,
+  TableCellOptions,
+  TableCellType,
+  TableColumnConfig,
+  TableConfig,
+  TableRowConfig,
 } from "./types.js";
 import { isTimeMode, parseIsoInstant, parsePlainTime } from "./controls/time-format.js";
 
@@ -37,7 +43,13 @@ const TYPE_OPTIONS = [
   { value: "vu_meter",      label: "VU meter" },
   { value: "gauge",         label: "Gauge" },
   { value: "group",         label: "Group" },
+  { value: "table",         label: "Table" },
 ];
+
+/** What a table's cells can be: every control that shows one entity. */
+const CELL_TYPE_OPTIONS = TYPE_OPTIONS.filter((o) => o.value !== "group" && o.value !== "table");
+const CELL_TYPES = CELL_TYPE_OPTIONS.map((o) => o.value as TableCellType);
+const isCellType = (v: unknown): v is TableCellType => CELL_TYPES.includes(v as TableCellType);
 
 const THEME_OPTIONS = [
   { value: "amber",     label: "Amber CRT" },
@@ -125,24 +137,36 @@ const CARD_SCHEMA: FormSchema = [
   },
 ];
 
+/** A frame that stretches rather than hugging its controls; rows and groups. */
+const FILL_WIDTH_FIELD = { name: "fill_width", selector: { boolean: {} } };
+
+/** A top-level row's settings, folded away above its entities. */
 const ROW_SCHEMA: FormSchema = [
   {
-    type: "grid",
+    type: "expandable",
     name: "",
+    flatten: true,
+    title: "Settings for this row",
     schema: [
-      { name: "justify",     selector: { select: { options: JUSTIFY_OPTIONS, mode: "dropdown" } } },
-      { name: "group_style", selector: { select: { options: GROUP_STYLE_OPTIONS, mode: "dropdown" } } },
+      {
+        type: "grid",
+        name: "",
+        schema: [
+          { name: "justify",     selector: { select: { options: JUSTIFY_OPTIONS, mode: "dropdown" } } },
+          { name: "group_style", selector: { select: { options: GROUP_STYLE_OPTIONS, mode: "dropdown" } } },
+        ],
+      },
+      {
+        type: "grid",
+        name: "",
+        schema: [
+          { name: "label",       selector: { text: {} } },
+          { name: "label_style", selector: { select: { options: LABEL_STYLE_INHERIT_OPTIONS, mode: "dropdown" } } },
+        ],
+      },
+      { type: "grid", name: "", schema: [SCALE_FIELD, FILL_WIDTH_FIELD] },
     ],
   },
-  {
-    type: "grid",
-    name: "",
-    schema: [
-      { name: "label",       selector: { text: {} } },
-      { name: "label_style", selector: { select: { options: LABEL_STYLE_INHERIT_OPTIONS, mode: "dropdown" } } },
-    ],
-  },
-  SCALE_FIELD,
 ];
 
 const COMMON_ENTITY_FIELDS: FormSchema = [
@@ -344,9 +368,115 @@ const SCHEMAS_BY_TYPE: Record<ControlType, FormSchema> = {
       ],
     },
     { name: "label", selector: { text: {} } },
+    { type: "grid", name: "", schema: [SCALE_FIELD, FILL_WIDTH_FIELD] },
+  ],
+  // Columns and rows have their own list editors below the form (see
+  // _renderTableEditor); the form itself holds the cell type and the size.
+  table: [
+    { name: "type",      selector: { select: { options: TYPE_OPTIONS, mode: "dropdown" } } },
+    { name: "cell_type", selector: { select: { options: CELL_TYPE_OPTIONS, mode: "dropdown" } } },
     SCALE_FIELD,
+    { name: "equal_columns", selector: { boolean: {} } },
   ],
 };
+
+/** Which layer of a table a settings form edits; a row's settings win over its columns'. */
+type TableLayer = "column" | "row";
+
+type SelectOption = { value: string; label: string };
+type SchemaField = {
+  name?: string;
+  type?: string;
+  schema?: FormSchema;
+  selector?: { select?: { options: SelectOption[] } };
+};
+
+/**
+ * What a column's dropdown shows when the column leaves it unset: the
+ * control's own default. Colour and LED pickers show their "unset" choice.
+ * VU meters lie down in a table (see retro-table's CELL_DEFAULTS).
+ */
+const COLUMN_SELECT_DEFAULTS: Record<string, string> = {
+  display_mode: "number",
+  orientation: "horizontal",
+  indicator_position: "right",
+};
+
+/**
+ * The settings a table column or row gives its cells: the cell type's own
+ * form fields, without what the table decides (type, entity, label). The
+ * attribute is typed in, as there is no single entity to list attributes
+ * from, and the actions fold away.
+ *
+ * Dropdowns get an explicit "unset" choice where unset means something other
+ * than a value the list already has: the theme colour (or no LED) for a
+ * column, and for a row on every dropdown, the column's setting.
+ */
+function tableSettingsSchema(type: TableCellType, layer: TableLayer): FormSchema {
+  const optional = (field: unknown): unknown => {
+    const f = field as SchemaField;
+    if (f.type === "grid" && f.schema) return { ...f, schema: f.schema.map(optional) };
+    const select = f.selector?.select;
+    if (!select || (layer === "column" && (f.name ?? "") in COLUMN_SELECT_DEFAULTS)) return field;
+    const unset = layer === "row" ? "(column's)" : f.name === "indicator" ? "(none)" : "(theme default)";
+    const choices = select.options.filter((o) => o.value !== "");
+    return { ...f, selector: { select: { ...select, options: [{ value: "", label: unset }, ...choices] } } };
+  };
+  const own = SCHEMAS_BY_TYPE[type]
+    .filter((f) => !COMMON_ENTITY_FIELDS.includes(f) && !ACTION_FIELDS.includes(f))
+    .map(optional);
+  return [
+    ...own,
+    ...(NUMERIC_TYPES.has(type) ? [{ name: "attribute", selector: { text: {} } }] : []),
+    { type: "expandable", name: "", flatten: true, title: "Actions", schema: ACTION_FIELDS },
+  ];
+}
+
+function perCellType<T>(make: (type: TableCellType) => T): Record<TableCellType, T> {
+  return Object.fromEntries(CELL_TYPES.map((t) => [t, make(t)])) as Record<TableCellType, T>;
+}
+
+const TABLE_SETTINGS: Record<TableLayer, Record<TableCellType, FormSchema>> = {
+  column: perCellType((t) => tableSettingsSchema(t, "column")),
+  row: perCellType((t) => tableSettingsSchema(t, "row")),
+};
+
+/** One table column: its header and group, then defaults for every cell in it, folded away. */
+const TABLE_COLUMN_SCHEMAS = perCellType((t): FormSchema => [
+  {
+    type: "grid",
+    name: "",
+    schema: [
+      { name: "header", selector: { text: {} } },
+      { name: "group", selector: { text: {} } },
+    ],
+  },
+  {
+    type: "expandable",
+    name: "",
+    flatten: true,
+    title: "Settings for this column",
+    schema: TABLE_SETTINGS.column[t],
+  },
+]);
+
+/** A table row's settings, folded away under its entities. */
+const TABLE_ROW_SETTINGS = perCellType((t) => ({
+  type: "expandable",
+  name: "",
+  flatten: true,
+  title: "Settings for this row",
+  schema: TABLE_SETTINGS.row[t],
+}));
+
+/** Names of the dropdowns in a schema, grids and folding sections included. */
+function selectFieldNames(schema: FormSchema): string[] {
+  return schema.flatMap((field) => {
+    const f = field as SchemaField;
+    if (f.schema) return selectFieldNames(f.schema);
+    return f.selector?.select && f.name ? [f.name] : [];
+  });
+}
 
 /** Keys that may legally appear on each control type - used to prune stale
     fields when the user changes a control's type via the form. `width`/`height`
@@ -388,8 +518,9 @@ const VALID_KEYS_BY_TYPE: Record<ControlType, ReadonlySet<string>> = {
     "attribute", "indicator",
   ]),
   group: new Set([
-    "type", "group_style", "label", "label_style", "scale", "entities", "width", "height",
+    "type", "group_style", "label", "label_style", "scale", "fill_width", "entities", "width", "height",
   ]),
+  table: new Set(["type", "cell_type", "scale", "equal_columns", "columns", "rows"]),
 };
 
 // ---- editor element -------------------------------------------------------
@@ -556,6 +687,7 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
       label: row.label ?? "",
       label_style: row.label_style ?? "",
       scale: row.scale ?? 1,
+      fill_width: row.fill_width ?? false,
     };
     const headerTitle = row.label?.trim()
       ? row.label.trim()
@@ -626,7 +758,9 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
     const isGroup = ent.type === "group";
     const headerSubtitle = isGroup
       ? ((ent as GroupConfig).label?.trim() || `${(ent as GroupConfig).entities?.length ?? 0} entities`)
-      : (ent.entity ?? "(no entity)");
+      : ent.type === "table"
+        ? `${cellTypeLabel(ent)}, ${ent.rows?.length ?? 0} rows × ${tableColumnCount(ent)} columns`
+        : (ent.entity ?? "(no entity)");
     return html`
       <ha-expansion-panel outlined>
         <div slot="header" class="entity-header">
@@ -665,6 +799,7 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
           ></ha-form>
           ${isGroup ? this._renderGroupChildren(ent as GroupConfig, path) : nothing}
           ${ent.type === "seven_segment" ? this._renderColorRules(ent, path) : nothing}
+          ${ent.type === "table" ? this._renderTableEditor(ent, path) : nothing}
         </div>
       </ha-expansion-panel>
     `;
@@ -802,11 +937,15 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
         label: g.label ?? "",
         label_style: g.label_style ?? "",
         scale: g.scale ?? 1,
+        fill_width: g.fill_width ?? false,
       };
     }
     if (ent.type === "seven_segment") {
       // Show the implicit default rather than a blank dropdown.
       return { ...ent, display_mode: ent.display_mode ?? "number" };
+    }
+    if (ent.type === "table") {
+      return { ...ent, cell_type: ent.cell_type ?? "seven_segment", scale: ent.scale ?? 1 };
     }
     return ent as unknown as Record<string, unknown>;
   }
@@ -854,6 +993,9 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
     if (schema?.name === "group_style") {
       return "Decorative frame around this cluster's controls. Embossed = engraved outline; screwed = sub-panel with corner screws; stencil = painted L-brackets at the corners.";
     }
+    if (schema?.name === "fill_width") {
+      return "Stretch the frame rather than hugging the controls: a row across the whole panel, a group into the rest of its line (shared with other groups that fill).";
+    }
     if (schema?.name === "scale") {
       return "Size relative to the surrounding panel or row (1 = same size).";
     }
@@ -874,6 +1016,12 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
     }
     if (schema?.name === "value_color") {
       return "Glow colour of the small value readout (only shown when 'Show value' is on).";
+    }
+    if (schema?.name === "cell_type") {
+      return "What the cells are. In YAML a column, row or cell can set its own type.";
+    }
+    if (schema?.name === "equal_columns") {
+      return "Make every column as wide as the widest one.";
     }
     return "";
   };
@@ -907,6 +1055,7 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
         delete (merged as Partial<RowConfig>).label_style;
       }
       if (merged.scale === 1) delete (merged as Partial<RowConfig>).scale;
+      if (merged.fill_width === false) delete (merged as Partial<RowConfig>).fill_width;
       return merged;
     });
     this._fireConfigChanged({ ...this._config, rows });
@@ -929,12 +1078,27 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
         const g = next as GroupConfig;
         if (!Array.isArray(g.entities)) g.entities = [];
       }
+      if (incoming.type === "table") {
+        const t = next as TableConfig;
+        if (!Array.isArray(t.rows)) t.rows = [];
+      }
     }
     // For groups, preserve the nested entities array (ha-form doesn't carry
     // it in the value, since it's not a schema field).
     if (next.type === "group" && oldEntity.type === "group") {
       (next as GroupConfig).entities = (oldEntity as GroupConfig).entities ?? [];
     }
+    // Same for a table's rows and columns, which have their own editors. A new
+    // cell type drops the column, row and cell settings it doesn't have.
+    if (next.type === "table" && oldEntity.type === "table") {
+      next.rows = oldEntity.rows ?? [];
+      if (oldEntity.columns) next.columns = oldEntity.columns;
+      else delete next.columns;
+      const cellType = next.cell_type ?? "seven_segment";
+      if (cellType !== (oldEntity.cell_type ?? "seven_segment")) next = retypeTable(next, cellType);
+    }
+    if (next.type === "table" && next.cell_type === "seven_segment") delete next.cell_type;
+    if (next.type === "table" && next.equal_columns === false) delete next.equal_columns;
     // Drop empties so the YAML stays clean.
     if (!(next as { entity?: string }).entity) {
       delete (next as { entity?: string }).entity;
@@ -961,7 +1125,8 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
     if ((next as { group_style?: string }).group_style === "none") {
       delete (next as { group_style?: string }).group_style;
     }
-    if (next.type === "group" && next.scale === 1) delete next.scale;
+    if ((next.type === "group" || next.type === "table") && next.scale === 1) delete next.scale;
+    if (next.type === "group" && next.fill_width === false) delete next.fill_width;
     if (next.type === "seven_segment") {
       const seg = next as SevenSegmentConfig;
       // An attribute picked for numbers means nothing for times (and vice
@@ -1061,20 +1226,24 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
     return ent.color_rules ?? [];
   }
 
-  /** Replace the rule list of the display at `path`; an empty list removes the key. */
-  private _setRules(path: number[], rules: ColorRule[]): void {
+  /** Replace the entity at `path` with what `patch` makes of it. */
+  private _patchEntity(path: number[], patch: (ent: ControlConfig) => ControlConfig): void {
     if (!this._config) return;
     const ei = path[path.length - 1];
     const newRows = updateRowEntities(this._config.rows, path.slice(0, -1), (entities) =>
-      entities.map((e, idx) => {
-        if (idx !== ei) return e;
-        const next = { ...e } as SevenSegmentConfig;
-        if (rules.length > 0) next.color_rules = rules;
-        else delete next.color_rules;
-        return next;
-      }),
+      entities.map((e, idx) => (idx === ei ? patch(e) : e)),
     );
     this._fireConfigChanged({ ...this._config, rows: newRows });
+  }
+
+  /** Replace the rule list of the display at `path`; an empty list removes the key. */
+  private _setRules(path: number[], rules: ColorRule[]): void {
+    this._patchEntity(path, (e) => {
+      const next = { ...e } as SevenSegmentConfig;
+      if (rules.length > 0) next.color_rules = rules;
+      else delete next.color_rules;
+      return next;
+    });
   }
 
   private _addRule = (path: number[]) => {
@@ -1107,6 +1276,257 @@ export class RetroControlPanelCardEditor extends LitElement implements LovelaceC
     this._setRules(path, this._rulesAt(path).map((r, idx) => (idx === ri ? rule : r)));
   };
 
+  // -- table ------------------------------------------------------------------
+
+  /**
+   * Columns (header + defaults for their cells) and rows (a label, one entity
+   * per column, and settings of their own) of a table, each an ordered list
+   * with move / remove buttons. The settings are those of the table's cell
+   * type. Per-cell overrides stay in YAML; editing a row keeps them.
+   */
+  private _renderTableEditor(t: TableConfig, path: number[]): TemplateResult {
+    const type = isCellType(t.cell_type) ? t.cell_type : "seven_segment";
+    const count = tableColumnCount(t);
+    const columns = paddedColumns(t, count);
+    const rows = t.rows ?? [];
+    const rowLabel = (schema: { name?: string }) => {
+      const m = /^cell_(\d+)$/.exec(schema?.name ?? "");
+      if (!m) return this._computeLabel(schema);
+      const i = Number(m[1]);
+      return columns[i]?.header?.trim() || `Column ${i + 1}`;
+    };
+    // A column or row can set its own type in YAML; its settings form then
+    // shows that type's fields, and its title names the type.
+    const ownType = (o: { type?: TableCellType }) => (isCellType(o.type) ? o.type : type);
+    const typeNote = (o: { type?: TableCellType }) =>
+      isCellType(o.type) ? ` · ${CELL_TYPE_OPTIONS.find((opt) => opt.value === o.type)?.label}` : "";
+    const helper = (t: TableCellType, layer: TableLayer) => (schema: { name?: string }) =>
+      this._tableHelper(schema, t, layer);
+    return html`
+      <div class="group-children">
+        <div class="section-title" style="margin: 8px 0 0 0; font-size: 13px;">Columns</div>
+        <div class="muted rules-hint">Settings here apply to every cell in the column.</div>
+        <div class="panel-list">
+          ${columns.map((col, ci) => html`
+            <div class="rule-box">
+              <div class="entity-header">
+                <span class="header-title">Column ${ci + 1}${typeNote(col)}</span>
+                <div class="entity-actions">
+                  <ha-icon-button
+                    .disabled=${ci === 0}
+                    .label=${"Move left"}
+                    @click=${() => this._moveTableColumn(path, ci, -1)}>
+                    <ha-icon icon="mdi:arrow-left"></ha-icon>
+                  </ha-icon-button>
+                  <ha-icon-button
+                    .disabled=${ci === count - 1}
+                    .label=${"Move right"}
+                    @click=${() => this._moveTableColumn(path, ci, 1)}>
+                    <ha-icon icon="mdi:arrow-right"></ha-icon>
+                  </ha-icon-button>
+                  <ha-icon-button
+                    .label=${"Remove column"}
+                    @click=${() => this._removeTableColumn(path, ci)}>
+                    <ha-icon icon="mdi:delete"></ha-icon>
+                  </ha-icon-button>
+                </div>
+              </div>
+              <ha-form
+                .hass=${this.hass}
+                .data=${tableSettingsFormData(col, ownType(col), "column")}
+                .schema=${TABLE_COLUMN_SCHEMAS[ownType(col)]}
+                .computeLabel=${this._computeLabel}
+                .computeHelper=${helper(ownType(col), "column")}
+                @value-changed=${(ev: CustomEvent) => this._handleTableColumnChange(path, ci, ev)}
+              ></ha-form>
+            </div>
+          `)}
+        </div>
+        <div class="actions-bar">
+          <mwc-button outlined @click=${() => this._addTableColumn(path)}>
+            <ha-icon icon="mdi:plus" style="margin-right: 4px;"></ha-icon>
+            Add column
+          </mwc-button>
+        </div>
+
+        <div class="section-title" style="margin: 8px 0 0 0; font-size: 13px;">Rows</div>
+        <div class="muted rules-hint">
+          A row's settings win over its columns'. Leave a setting empty to use the column's.
+        </div>
+        <div class="panel-list">
+          ${rows.length === 0
+            ? html`<div class="empty">No rows yet.</div>`
+            : rows.map((row, ri) => html`
+                <div class="rule-box">
+                  <div class="entity-header">
+                    <span class="header-title">${row.label?.trim() || `Row ${ri + 1}`}${typeNote(row)}</span>
+                    <div class="entity-actions">
+                      <ha-icon-button
+                        .disabled=${ri === 0}
+                        .label=${"Move up"}
+                        @click=${() => this._moveTableRow(path, ri, -1)}>
+                        <ha-icon icon="mdi:arrow-up"></ha-icon>
+                      </ha-icon-button>
+                      <ha-icon-button
+                        .disabled=${ri === rows.length - 1}
+                        .label=${"Move down"}
+                        @click=${() => this._moveTableRow(path, ri, 1)}>
+                        <ha-icon icon="mdi:arrow-down"></ha-icon>
+                      </ha-icon-button>
+                      <ha-icon-button
+                        .label=${"Remove row"}
+                        @click=${() => this._removeTableRow(path, ri)}>
+                        <ha-icon icon="mdi:delete"></ha-icon>
+                      </ha-icon-button>
+                    </div>
+                  </div>
+                  <ha-form
+                    .hass=${this.hass}
+                    .data=${tableRowFormData(row, count, ownType(row))}
+                    .schema=${tableRowSchema(count, ownType(row))}
+                    .computeLabel=${rowLabel}
+                    .computeHelper=${helper(ownType(row), "row")}
+                    @value-changed=${(ev: CustomEvent) => this._handleTableRowChange(path, ri, count, ev)}
+                  ></ha-form>
+                </div>
+              `)}
+        </div>
+        <div class="actions-bar">
+          <mwc-button outlined @click=${() => this._addTableRow(path)}>
+            <ha-icon icon="mdi:plus" style="margin-right: 4px;"></ha-icon>
+            Add row
+          </mwc-button>
+        </div>
+        <div class="muted rules-hint">
+          Settings for a single cell, and color rules, go in YAML: write the cell as an
+          object with its entity and settings instead of an entity id. So does a different
+          type for a column, row or cell (e.g. type: button).
+        </div>
+      </div>
+    `;
+  }
+
+  /** Helper texts for a table's column and row forms, where they differ from a control's. */
+  private _tableHelper(schema: { name?: string }, type: TableCellType, layer: TableLayer): string {
+    switch (schema?.name) {
+      case "header":
+        return "Usually the unit, e.g. °C. Keeps its case.";
+      case "group":
+        return layer === "column"
+          ? "E.g. a room. Neighbouring columns with the same group share one heading."
+          : "E.g. a room. Neighbouring rows with the same group share one name, left of a bracket.";
+      case "label":
+        return "Shown left of the row.";
+      case "unit":
+        return type === "seven_segment"
+          ? "Shown beside each value. Leave empty to show none, since the header names the unit."
+          : "Printed on the dial. Leave empty for the entity's unit; a single space shows none.";
+      case "display_mode":
+        return "Number, a timestamp as HH:MM, or a countdown - as for a seven-segment display.";
+      case "attribute":
+        return "Show this attribute instead of the state, e.g. current_temperature or hvac_action.";
+      case "orientation":
+        return "In a table a VU meter lies down unless you set it upright.";
+      default:
+        return this._computeHelper(schema);
+    }
+  }
+
+  private _patchTable(path: number[], patch: (t: TableConfig) => TableConfig): void {
+    this._patchEntity(path, (e) => patch(e as TableConfig));
+  }
+
+  private _addTableColumn = (path: number[]) => {
+    this._patchTable(path, (t) => ({ ...t, columns: [...paddedColumns(t, tableColumnCount(t)), {}] }));
+  };
+
+  /** Removing a column also removes its cell from every row, so rows stay aligned. */
+  private _removeTableColumn = (path: number[], ci: number) => {
+    this._patchTable(path, (t) => ({
+      ...t,
+      columns: paddedColumns(t, tableColumnCount(t)).filter((_, i) => i !== ci),
+      rows: (t.rows ?? []).map((r) => ({ ...r, cells: trimCells((r.cells ?? []).filter((_, i) => i !== ci)) })),
+    }));
+  };
+
+  /** Moving a column moves its cells along with it. */
+  private _moveTableColumn = (path: number[], ci: number, delta: number) => {
+    this._patchTable(path, (t) => {
+      const count = tableColumnCount(t);
+      const target = ci + delta;
+      if (target < 0 || target >= count) return t;
+      const swap = <T,>(list: T[]): T[] => {
+        const next = [...list];
+        [next[ci], next[target]] = [next[target], next[ci]];
+        return next;
+      };
+      return {
+        ...t,
+        columns: swap(paddedColumns(t, count)),
+        rows: (t.rows ?? []).map((r) => {
+          const cells = Array.from({ length: count }, (_, i) => r.cells?.[i] ?? null);
+          return { ...r, cells: trimCells(swap(cells)) };
+        }),
+      };
+    });
+  };
+
+  private _handleTableColumnChange = (path: number[], ci: number, ev: CustomEvent) => {
+    const value = ev.detail.value as Record<string, unknown>;
+    this._patchTable(path, (t) => {
+      const columns = paddedColumns(t, tableColumnCount(t));
+      // Start from the stored column so settings without a field (e.g. color
+      // rules written in YAML) survive, then drop cleared fields.
+      const col = { ...columns[ci], ...value } as Record<string, unknown>;
+      pruneCellSettings(col, "column");
+      columns[ci] = col as TableColumnConfig;
+      return { ...t, columns };
+    });
+  };
+
+  private _addTableRow = (path: number[]) => {
+    this._patchTable(path, (t) => ({ ...t, rows: [...(t.rows ?? []), { cells: [] }] }));
+  };
+
+  private _removeTableRow = (path: number[], ri: number) => {
+    this._patchTable(path, (t) => ({ ...t, rows: (t.rows ?? []).filter((_, i) => i !== ri) }));
+  };
+
+  private _moveTableRow = (path: number[], ri: number, delta: number) => {
+    this._patchTable(path, (t) => {
+      const rows = [...(t.rows ?? [])];
+      const target = ri + delta;
+      if (target < 0 || target >= rows.length) return t;
+      [rows[ri], rows[target]] = [rows[target], rows[ri]];
+      return { ...t, rows };
+    });
+  };
+
+  private _handleTableRowChange = (path: number[], ri: number, count: number, ev: CustomEvent) => {
+    const value = ev.detail.value as Record<string, unknown>;
+    this._patchTable(path, (t) => {
+      const rows = [...(t.rows ?? [])];
+      const old = rows[ri] ?? { cells: [] };
+      const cells = Array.from({ length: count }, (_, i): string | TableCellConfig | null => {
+        const entity = value[`cell_${i}`];
+        const prev = old.cells?.[i];
+        if (typeof entity !== "string" || !entity) return null;
+        // Keep a cell's own settings; only its entity changes here.
+        return prev && typeof prev === "object" ? { ...prev, entity } : entity;
+      });
+      // The rest of the form is the label and the row's settings. Start from
+      // the stored row so settings without a field survive.
+      const settings = Object.fromEntries(
+        Object.entries(value).filter(([k]) => !/^cell_\d+$/.test(k)),
+      );
+      const row = { ...old, ...settings } as Record<string, unknown>;
+      pruneCellSettings(row, "row");
+      row.cells = trimCells(cells);
+      rows[ri] = row as unknown as TableRowConfig;
+      return { ...t, rows };
+    });
+  };
+
   private _fireConfigChanged(config: RetroControlPanelCardConfig) {
     this.dispatchEvent(
       new CustomEvent("config-changed", {
@@ -1129,6 +1549,127 @@ function pruneEmpty(obj: Record<string, unknown>, keys: string[]): void {
   for (const k of keys) {
     if (obj[k] === "" || obj[k] === undefined) delete obj[k];
   }
+}
+
+/** Columns a table has: those declared, or as many as its widest row. */
+function tableColumnCount(t: TableConfig): number {
+  return Math.max(
+    t.columns?.length ?? 0,
+    ...(t.rows ?? []).map((r) => (Array.isArray(r?.cells) ? r.cells.length : 0)),
+    1,
+  );
+}
+
+/** A table's columns, padded with empty ones up to `count`. */
+function paddedColumns(t: TableConfig, count: number): TableColumnConfig[] {
+  return Array.from({ length: count }, (_, i) => t.columns?.[i] ?? {});
+}
+
+/** Drop trailing empty cells so the YAML doesn't fill up with nulls. */
+function trimCells(cells: Array<string | TableCellConfig | null | undefined>): Array<string | TableCellConfig | null> {
+  const out = cells.map((c) => c ?? null);
+  while (out.length > 0 && (out[out.length - 1] === null || out[out.length - 1] === "")) out.pop();
+  return out;
+}
+
+/** The name of a table's cell type, for its panel header. */
+function cellTypeLabel(t: TableConfig): string {
+  const type = t.cell_type ?? "seven_segment";
+  return CELL_TYPE_OPTIONS.find((o) => o.value === type)?.label ?? type;
+}
+
+/**
+ * A column's or row's settings as form data. A dropdown it leaves unset shows
+ * what that means: for a column the control's default (or "theme default" /
+ * "none"), for a row the "column's" choice.
+ */
+function tableSettingsFormData(
+  settings: TableCellOptions,
+  type: TableCellType,
+  layer: TableLayer,
+): Record<string, unknown> {
+  const data: Record<string, unknown> = { ...settings };
+  for (const name of selectFieldNames(TABLE_SETTINGS[layer][type])) {
+    if (data[name] === undefined) data[name] = layer === "column" ? (COLUMN_SELECT_DEFAULTS[name] ?? "") : "";
+  }
+  return data;
+}
+
+/** Boolean settings that are off unless set. */
+const OFF_BY_DEFAULT = ["show_seconds", "leading_zeros", "show_scale", "show_value"];
+
+/**
+ * Drop cleared fields from a column's or row's settings. A column also drops
+ * values that are the default anyway. A row keeps them: there they override
+ * a column that says otherwise.
+ */
+function pruneCellSettings(settings: Record<string, unknown>, layer: TableLayer): void {
+  for (const [key, value] of Object.entries(settings)) {
+    if (value === "" || value === undefined || (typeof value === "number" && !Number.isFinite(value))) {
+      delete settings[key];
+    }
+  }
+  if (layer === "row") return;
+  for (const [key, value] of Object.entries(COLUMN_SELECT_DEFAULTS)) {
+    if (settings[key] === value) delete settings[key];
+  }
+  for (const key of OFF_BY_DEFAULT) {
+    if (settings[key] === false) delete settings[key];
+  }
+}
+
+/**
+ * A table switched to another cell type: drop the column, row and cell
+ * settings it doesn't have. A table that mixes types (a column, row or cell
+ * with a type of its own, set in YAML) is left as it is: which settings are
+ * meant for which type is then its author's business.
+ */
+function retypeTable(t: TableConfig, type: TableCellType): TableConfig {
+  const ownType = (o: unknown) => !!o && typeof o === "object" && "type" in o;
+  const mixed =
+    (t.columns ?? []).some(ownType) ||
+    (t.rows ?? []).some((r) => ownType(r) || (r?.cells ?? []).some(ownType));
+  if (mixed) return t;
+  const valid = VALID_KEYS_BY_TYPE[type];
+  const keep = <T extends object>(obj: T, ...own: string[]): T =>
+    Object.fromEntries(
+      Object.entries(obj).filter(([k]) => own.includes(k) || (valid.has(k) && !["type", "entity", "label"].includes(k))),
+    ) as T;
+  const out: TableConfig = {
+    ...t,
+    rows: (t.rows ?? []).map((r) => ({
+      ...keep(r, "label", "group"),
+      cells: (r.cells ?? []).map((c) => (c && typeof c === "object" ? keep(c, "entity") : c)),
+    })),
+  };
+  if (t.columns) out.columns = t.columns.map((c) => keep(c, "header", "group"));
+  return out;
+}
+
+function tableRowFormData(row: TableRowConfig, count: number, type: TableCellType): Record<string, unknown> {
+  const { cells, ...settings } = row;
+  const data = tableSettingsFormData(settings, type, "row");
+  data.label = row.label ?? "";
+  for (let i = 0; i < count; i++) {
+    const cell = cells?.[i];
+    data[`cell_${i}`] = typeof cell === "string" ? cell : (cell?.entity ?? "");
+  }
+  return data;
+}
+
+function tableRowSchema(count: number, type: TableCellType): FormSchema {
+  return [
+    {
+      type: "grid",
+      name: "",
+      schema: [
+        { name: "label", selector: { text: {} } },
+        { name: "group", selector: { text: {} } },
+      ],
+    },
+    ...Array.from({ length: count }, (_, i) => ({ name: `cell_${i}`, selector: { entity: {} } })),
+    TABLE_ROW_SETTINGS[type],
+  ];
 }
 
 /**

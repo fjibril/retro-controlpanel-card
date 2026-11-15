@@ -5,7 +5,7 @@ import type { ColorRule, GlowColor, SevenSegmentConfig } from "./../types.js";
 import { actionHandler, hasAction } from "./../action-handler-directive.js";
 import { matchColorRule, nextRuleBoundary } from "./color-rules.js";
 import { GLOW_PALETTE } from "./glow-palette.js";
-import { digitSvg } from "./segment-shapes.js";
+import { digitSvg, textTokens } from "./segment-shapes.js";
 import {
   FLIP_MARGIN_MS,
   clockTokens,
@@ -72,6 +72,10 @@ export class RetroSevenSegment extends RetroControlBase {
         inset 0 0.15em 0.3em rgba(0, 0, 0, 0.8),
         inset 0 -1px 0 rgba(255, 255, 255, 0.05);
       min-height: 2.2em;
+    }
+    :host([compact]) .display {
+      padding: 0.25em 0.4em;
+      min-height: 0;
     }
     .digit {
       width: 1.4em;
@@ -162,7 +166,8 @@ export class RetroSevenSegment extends RetroControlBase {
       align-items: center;
       gap: 0.35em;
     }
-    .label-row retro-indicator {
+    .label-row retro-indicator,
+    .display-row retro-indicator {
       font-size: 0.7em;
     }
   `;
@@ -196,9 +201,13 @@ export class RetroSevenSegment extends RetroControlBase {
     this.renderedAt = Date.now();
     const tokens = this.displayTokens(this.renderedAt);
     const unit = this.resolvedUnit();
+    const indicator = cfg.indicator
+      ? html`<retro-indicator .color=${cfg.indicator} .on=${this.isIndicatorActive()}></retro-indicator>`
+      : nothing;
 
-    return html`
+    const display = html`
       <div class="display-row">
+        ${this.compact ? indicator : nothing}
         <div
           class="display clickable"
           part="display"
@@ -216,10 +225,15 @@ export class RetroSevenSegment extends RetroControlBase {
         </div>
         ${unit ? html`<span class="unit ${this.labelStyle}">${unit}</span>` : nothing}
       </div>
+    `;
+    // A table cell is just the window (its LED moves beside it): the table
+    // provides labels and headers.
+    if (this.compact) return display;
+
+    return html`
+      ${display}
       <div class="label-row">
-        ${cfg.indicator
-          ? html`<retro-indicator .color=${cfg.indicator} .on=${this.isIndicatorActive()}></retro-indicator>`
-          : nothing}
+        ${indicator}
         <retro-label .text=${this.resolvedLabel()} .styleName=${this.labelStyle}></retro-label>
       </div>
     `;
@@ -326,6 +340,20 @@ export class RetroSevenSegment extends RetroControlBase {
     return parseTimeTarget(raw);
   }
 
+  /**
+   * The text to spell out when the value isn't a number: the configured
+   * attribute if there is one (e.g. a climate's hvac_action), else the state.
+   * Null for unknown / unavailable / missing, which show dashes.
+   */
+  private textValue(): string | null {
+    const s = this.stateObj;
+    if (!s) return null;
+    const raw = this.config.attribute ? s.attributes?.[this.config.attribute] : s.state;
+    if (typeof raw !== "string") return null;
+    const text = raw.trim();
+    return text && text !== "unknown" && text !== "unavailable" ? text : null;
+  }
+
   /** Seconds from now until the target (negative once past), or null. */
   private countdownSeconds(src: TimeSource | null, now: number, tz: string | undefined): number | null {
     if (!src || src.kind === "now") return null;
@@ -393,7 +421,8 @@ export class RetroSevenSegment extends RetroControlBase {
    * Compute the digit/dot tokens shown on the display from the current entity
    * state. Returns an array like ["1","2",".","3","4"] for "12.34". Pads with
    * zeros or spaces depending on `leading_zeros`, replaces overflow with "-"
-   * characters, shows "----" on unavailable state.
+   * characters, shows "----" on unavailable state. A text state (or text
+   * attribute) is spelled out in segment letters instead, e.g. "HEAt".
    */
   formatTokens(numDigits: number): string[] {
     const cfg = this.config;
@@ -402,7 +431,10 @@ export class RetroSevenSegment extends RetroControlBase {
     // Attribute-aware: state for plain numerics, the chosen/default attribute
     // for complex entities (weather, climate, …).
     const num = this.resolvedValue();
-    if (num === null) return blank();
+    if (num === null) {
+      const text = this.textValue();
+      return text ? textTokens(text, numDigits) : blank();
+    }
 
     const minFrac = cfg.minimum_fraction_digits ?? 0;
     const maxFrac = cfg.maximum_fraction_digits ?? 0;

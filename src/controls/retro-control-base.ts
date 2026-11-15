@@ -31,6 +31,11 @@ export abstract class RetroControlBase extends LitElement {
   @property({ attribute: false }) hass?: HomeAssistant;
   @property({ attribute: false }) config!: EntityControlConfig;
   @property({ attribute: false }) labelStyle: LabelStyle = "etched";
+  /**
+   * Just the control, without the label beneath it: a table cell, whose row
+   * label and column header already name it. Indicator LEDs stay.
+   */
+  @property({ type: Boolean, reflect: true }) compact = false;
 
   protected get stateObj(): HassEntity | undefined {
     if (!this.hass || !this.config?.entity) return undefined;
@@ -229,19 +234,21 @@ export abstract class RetroControlBase extends LitElement {
   }
 
   /**
-   * Execute an action config. Same surface area as HA's standard handleAction
-   * (more-info / navigate / url / toggle / call-service / none), implemented
-   * locally so we don't depend on quirks of `custom-card-helpers`'s toggle
-   * path (which dispatches per-domain rather than via `homeassistant.toggle`).
+   * Execute an action config. Covers HA's standard actions (more-info /
+   * navigate / url / toggle / perform-action / none, plus the older
+   * call-service name), implemented locally so we don't depend on quirks of
+   * `custom-card-helpers`'s toggle path (which dispatches per-domain rather
+   * than via `homeassistant.toggle`).
    */
   protected async dispatchAction(cfg: ActionConfig): Promise<void> {
     if (!this.hass || cfg.action === "none") return;
     switch (cfg.action) {
       case "more-info":
-        this.fireEvent("hass-more-info", { entityId: this.config?.entity });
+        this.fireEvent("hass-more-info", { entityId: cfg.entity ?? this.config?.entity });
         return;
       case "navigate":
-        window.history.pushState(null, "", cfg.navigation_path);
+        if (cfg.navigation_replace) window.history.replaceState(null, "", cfg.navigation_path);
+        else window.history.pushState(null, "", cfg.navigation_path);
         window.dispatchEvent(new Event("location-changed"));
         return;
       case "url":
@@ -249,12 +256,30 @@ export abstract class RetroControlBase extends LitElement {
         return;
       case "toggle":
         return this.toggleEntity();
+      case "perform-action":
       case "call-service": {
-        const [domain, service] = cfg.service.split(".");
+        const name = cfg.action === "perform-action" ? cfg.perform_action : cfg.service;
+        const [domain, service] = String(name ?? "").split(".");
         if (!domain || !service) return;
-        await this.hass.callService(domain, service, cfg.service_data ?? {});
+        const data = (cfg.action === "perform-action" ? cfg.data : cfg.data ?? cfg.service_data) ?? {};
+        if (cfg.target) {
+          // HA's callService takes the target as a fourth argument, which the
+          // custom-card-helpers typings predate.
+          const call = this.hass.callService as unknown as (
+            domain: string, service: string,
+            data: Record<string, unknown>, target: Record<string, unknown>,
+          ) => Promise<unknown>;
+          await call.call(this.hass, domain, service, data, cfg.target);
+        } else {
+          await this.hass.callService(domain, service, data);
+        }
         return;
       }
+      default:
+        // e.g. "assist", which needs Home Assistant's own dialogs.
+        console.warn(
+          `retro-controlpanel-card: the "${(cfg as { action?: string }).action}" action isn't supported`,
+        );
     }
   }
 
