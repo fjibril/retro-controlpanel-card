@@ -75,10 +75,39 @@ describe("retro-seven-segment.formatTokens", () => {
     expect(el.formatTokens(4)).toEqual(["-", "-", "-", "-"]);
   });
 
-  it("returns dashes for non-numeric state", async () => {
-    const { el } = await build({}, "hello");
+  it("spells out a text state in segment letters", async () => {
+    const heat = await build({}, "heat");
+    const off = await build({}, "off");
+    toDispose.push(heat.el, off.el);
+    expect(heat.el.formatTokens(4)).toEqual(["h", "e", "a", "t"]);
+    expect(off.el.formatTokens(4)).toEqual([" ", "o", "f", "f"]);
+  });
+
+  it("spells out a text attribute such as a climate's hvac_action", async () => {
+    const { el } = await build({ attribute: "hvac_action" }, "21", { hvac_action: "heating" });
     toDispose.push(el);
-    expect(el.formatTokens(4)).toEqual(["-", "-", "-", "-"]);
+    expect(el.formatTokens(4)).toEqual(["h", "e", "a", "t"]);
+  });
+
+  it("still shows dashes for unknown and for a missing attribute", async () => {
+    const unknown = await build({}, "unknown");
+    const missing = await build({ attribute: "hvac_action" }, "21");
+    toDispose.push(unknown.el, missing.el);
+    expect(unknown.el.formatTokens(4)).toEqual(["-", "-", "-", "-"]);
+    expect(missing.el.formatTokens(4)).toEqual(["-", "-", "-", "-"]);
+  });
+
+  it("compact mode shows only the window, without the label row", async () => {
+    const hass = makeHass({ "sensor.temp": { state: "21" } });
+    const el = await mount<RetroSevenSegment>("retro-seven-segment", (n) => {
+      n.compact = true;
+      n.hass = hass;
+      n.config = { ...baseCfg, label: "Living" };
+    });
+    toDispose.push(el);
+    expect(el.hasAttribute("compact")).toBe(true);
+    expect(el.shadowRoot?.querySelector(".display")).not.toBeNull();
+    expect(el.shadowRoot?.querySelector(".label-row")).toBeNull();
   });
 
   it("renders the unit suffix when provided", async () => {
@@ -156,13 +185,13 @@ describe("retro-seven-segment.resolvedLabel", () => {
  * opted into, so results don't depend on the test machine's zone.
  */
 async function buildTime(cfg: Partial<SevenSegmentConfig>, state?: string, timeZone = "UTC") {
-  const hass = makeHass(state === undefined ? {} : { "sensor.prayer": { state } });
+  const hass = makeHass(state === undefined ? {} : { "sensor.event": { state } });
   Object.assign(hass, { config: { time_zone: timeZone }, locale: { time_zone: "server" } });
   const el = await mount<RetroSevenSegment>("retro-seven-segment", (n) => {
     n.hass = hass;
     n.config = {
       type: "seven_segment",
-      ...(state === undefined ? {} : { entity: "sensor.prayer" }),
+      ...(state === undefined ? {} : { entity: "sensor.event" }),
       ...cfg,
     };
   });
@@ -192,11 +221,11 @@ describe("retro-seven-segment time modes", () => {
 
   it("time mode uses the browser zone unless the profile picks the server zone", async () => {
     const state = "2026-09-26T03:39:00+00:00";
-    const hass = makeHass({ "sensor.prayer": { state } });
+    const hass = makeHass({ "sensor.event": { state } });
     Object.assign(hass, { config: { time_zone: "Asia/Tokyo" }, locale: { time_zone: "local" } });
     const el = await mount<RetroSevenSegment>("retro-seven-segment", (n) => {
       n.hass = hass;
-      n.config = { type: "seven_segment", entity: "sensor.prayer", display_mode: "time" };
+      n.config = { type: "seven_segment", entity: "sensor.event", display_mode: "time" };
     });
     toDispose.push(el);
     expect(el.displayTokens()).toEqual(clockTokens(wallTimeAt(Date.parse(state)), false));
@@ -320,20 +349,21 @@ describe("retro-seven-segment colour rules", () => {
   };
   const segmentColor = (el: RetroSevenSegment) => el.style.getPropertyValue("--retro-segment-on");
 
-  // Five prayer times of one day, each display naming its successor so it can
-  // tell "current" (passed, next one hasn't) from "over" (next one passed too).
-  const PRAYERS: Record<string, string> = {
-    "sensor.fajr": "2026-10-11T06:04:00+00:00",
-    "sensor.dhuhr": "2026-10-11T13:08:00+00:00",
-    "sensor.asr": "2026-10-11T16:00:00+00:00",
-    "sensor.maghrib": "2026-10-11T18:38:00+00:00",
-    "sensor.isha": "2026-10-11T20:11:00+00:00",
+  // Five start times from one day's timetable, each display naming its
+  // successor so it can tell "current" (started, next one hasn't) from "over"
+  // (next one started too).
+  const PERIODS: Record<string, string> = {
+    "sensor.period_1": "2026-10-11T06:04:00+00:00",
+    "sensor.period_2": "2026-10-11T13:08:00+00:00",
+    "sensor.period_3": "2026-10-11T16:00:00+00:00",
+    "sensor.period_4": "2026-10-11T18:38:00+00:00",
+    "sensor.period_5": "2026-10-11T20:11:00+00:00",
   };
-  const ORDER = Object.keys(PRAYERS);
+  const ORDER = Object.keys(PERIODS);
 
-  async function buildPrayer(entity: string, mode: "time" | "countdown") {
+  async function buildPeriod(entity: string, mode: "time" | "countdown") {
     const hass = makeHass(
-      Object.fromEntries(Object.entries(PRAYERS).map(([id, state]) => [id, { state }])),
+      Object.fromEntries(Object.entries(PERIODS).map(([id, state]) => [id, { state }])),
     );
     Object.assign(hass, { config: { time_zone: "UTC" }, locale: { time_zone: "server" } });
     const next = ORDER[ORDER.indexOf(entity) + 1];
@@ -383,25 +413,25 @@ describe("retro-seven-segment colour rules", () => {
   });
 
   for (const mode of ["time", "countdown"] as const) {
-    it(`${mode} mode: passed prayers red, the current one green, upcoming blue`, async () => {
-      // Maghrib passed 37 minutes ago, Isha is 55 minutes away.
+    it(`${mode} mode: past periods red, the current one green, upcoming blue`, async () => {
+      // Period 4 started 37 minutes ago, period 5 starts in 55 minutes.
       fakeClock("2026-10-11T19:15:30Z");
       const colors: Record<string, string | undefined> = {};
-      for (const entity of ORDER) colors[entity] = (await buildPrayer(entity, mode)).effectiveColor();
+      for (const entity of ORDER) colors[entity] = (await buildPeriod(entity, mode)).effectiveColor();
       expect(colors).toEqual({
-        "sensor.fajr": "red",
-        "sensor.dhuhr": "red",
-        "sensor.asr": "red",
-        "sensor.maghrib": "green",
-        "sensor.isha": "blue",
+        "sensor.period_1": "red",
+        "sensor.period_2": "red",
+        "sensor.period_3": "red",
+        "sensor.period_4": "green",
+        "sensor.period_5": "blue",
       });
     });
   }
 
   it("a fixed time display wakes exactly when a rule's time is reached, and recolours", async () => {
-    fakeClock("2026-10-11T18:30:00Z"); // 8 minutes before Maghrib
+    fakeClock("2026-10-11T18:30:00Z"); // 8 minutes before period 4
     const before = vi.getTimerCount();
-    const el = await buildPrayer("sensor.maghrib", "time");
+    const el = await buildPeriod("sensor.period_4", "time");
     expect(segmentColor(el)).toBe(GLOW_PALETTE.blue.on);
     expect(vi.getTimerCount() - before).toBe(1);
 
@@ -410,12 +440,12 @@ describe("retro-seven-segment colour rules", () => {
     await el.updateComplete;
     expect(segmentColor(el)).toBe(GLOW_PALETTE.blue.on);
 
-    // ...it turns green as Maghrib arrives...
+    // ...it turns green as period 4 starts...
     await vi.advanceTimersByTimeAsync(60_000 + 100);
     await el.updateComplete;
     expect(segmentColor(el)).toBe(GLOW_PALETTE.green.on);
 
-    // ...and red once Isha (the entity its first rule watches) has arrived,
+    // ...and red once period 5 (the entity its first rule watches) has started,
     // 93 minutes later - longer than a single timer, so it re-plans on the way.
     await vi.advanceTimersByTimeAsync(93 * 60_000);
     await el.updateComplete;

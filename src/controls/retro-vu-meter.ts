@@ -135,6 +135,11 @@ export class RetroVuMeter extends RetroControlBase {
     .label-row retro-indicator {
       font-size: 0.7em;
     }
+    /* A table cell: no label, but an indicator LED stays. */
+    :host([compact]) retro-label,
+    :host([compact]) .label-row:not(:has(retro-indicator)) {
+      display: none;
+    }
   `;
 
   render() {

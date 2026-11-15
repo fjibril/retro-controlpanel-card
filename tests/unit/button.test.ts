@@ -116,4 +116,50 @@ describe("retro-button", () => {
       { entity_id: "light.lamp", brightness: 200 },
     );
   });
+
+  // The format Home Assistant's action editor writes today.
+  async function tapWith(tap_action: ButtonConfig["tap_action"]) {
+    const built = await build(
+      { type: "button", entity: "script.morning", tap_action },
+      { "script.morning": { state: "off" } },
+    );
+    toDispose.push(built.el);
+    (built.el.shadowRoot!.querySelector("button.btn") as HTMLButtonElement).click();
+    await built.el.updateComplete;
+    return built;
+  }
+
+  it("runs a perform-action with its data and target", async () => {
+    const { hass } = await tapWith({
+      action: "perform-action",
+      perform_action: "light.turn_on",
+      data: { brightness: 200 },
+      target: { entity_id: "light.lamp" },
+    });
+    expect(hass.callService).toHaveBeenCalledWith("light", "turn_on", { brightness: 200 }, { entity_id: "light.lamp" });
+  });
+
+  it("runs a perform-action without data or target", async () => {
+    const { hass } = await tapWith({ action: "perform-action", perform_action: "script.morning" });
+    expect(hass.callService).toHaveBeenCalledWith("script", "morning", {});
+  });
+
+  it("accepts call-service with data and target too", async () => {
+    const { hass } = await tapWith({
+      action: "call-service",
+      service: "light.turn_off",
+      data: { transition: 2 },
+      target: { area_id: "kitchen" },
+    });
+    expect(hass.callService).toHaveBeenCalledWith("light", "turn_off", { transition: 2 }, { area_id: "kitchen" });
+  });
+
+  it("opens more-info for the entity an action names", async () => {
+    const { el } = await build({ type: "button", entity: "script.morning", tap_action: { action: "more-info", entity: "sensor.temp" } });
+    toDispose.push(el);
+    let opened: unknown;
+    el.addEventListener("hass-more-info", (ev) => { opened = (ev as CustomEvent).detail; });
+    (el.shadowRoot!.querySelector("button.btn") as HTMLButtonElement).click();
+    expect(opened).toEqual({ entityId: "sensor.temp" });
+  });
 });

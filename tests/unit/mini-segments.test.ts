@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { integerTokens } from "../../src/controls/segment-shapes.js";
+import { integerTokens, textTokens } from "../../src/controls/segment-shapes.js";
 import "../../src/controls/retro-mini-segments.js";
 import type { RetroMiniSegments } from "../../src/controls/retro-mini-segments.js";
 import { cleanup, mount } from "./setup.js";
@@ -27,6 +27,24 @@ describe("integerTokens", () => {
 
   it("shows dashes on overflow", () => {
     expect(integerTokens(1234, 3)).toEqual(["-", "-", "-"]);
+  });
+});
+
+describe("textTokens", () => {
+  it("spells a state in segment letters, right-aligned like numbers", () => {
+    expect(textTokens("heat", 4)).toEqual(["h", "e", "a", "t"]);
+    expect(textTokens("off", 4)).toEqual([" ", "o", "f", "f"]);
+  });
+
+  it("is case-insensitive and cuts long words to fit", () => {
+    expect(textTokens("HEATING", 4)).toEqual(["h", "e", "a", "t"]);
+    expect(textTokens("idle", 3)).toEqual(["i", "d", "l"]);
+  });
+
+  it("keeps digits, dashes and underscores, and blanks what it can't draw", () => {
+    expect(textTokens("fan_only", 4)).toEqual(["f", "a", "n", "_"]);
+    expect(textTokens("a1-b", 4)).toEqual(["a", "1", "-", "b"]);
+    expect(textTokens("a!b", 3)).toEqual(["a", " ", "b"]);
   });
 });
 

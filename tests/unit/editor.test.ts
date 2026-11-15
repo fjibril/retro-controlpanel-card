@@ -254,6 +254,57 @@ describe("retro-controlpanel-card-editor", () => {
     expect(ent.entities).toHaveLength(1);
   });
 
+  it("writes fill_width for a row or group only when it is on", async () => {
+    const { el } = await buildEditor();
+    toDispose.push(el);
+    const handler = vi.fn();
+    el.addEventListener("config-changed", handler);
+    const editor = el as unknown as {
+      _handleRowChange: (ri: number, ev: CustomEvent) => void;
+      _handleEntityChange: (path: number[], ev: CustomEvent) => void;
+    };
+    const ev = (value: Record<string, unknown>) => new CustomEvent("value-changed", { detail: { value } });
+    const row = { justify: "center", group_style: "screwed", label: "", label_style: "", scale: 1 };
+    const lastRow = () => handler.mock.calls[handler.mock.calls.length - 1][0].detail.config.rows[0];
+
+    editor._handleRowChange(0, ev({ ...row, fill_width: true }));
+    expect(lastRow().fill_width).toBe(true);
+    editor._handleRowChange(0, ev({ ...row, fill_width: false }));
+    expect(lastRow()).not.toHaveProperty("fill_width");
+
+    const hass = makeHass({});
+    const group = { type: "group" as const, entities: [{ type: "button" as const }] };
+    const groupEditor = await mount<RetroControlPanelCardEditor>("retro-controlpanel-card-editor", (n) => {
+      n.hass = hass;
+      n.setConfig({ type: "custom:retro-controlpanel-card", rows: [{ entities: [group] }] });
+    });
+    toDispose.push(groupEditor);
+    const groupHandler = vi.fn();
+    groupEditor.addEventListener("config-changed", groupHandler);
+    const ge = groupEditor as unknown as typeof editor & { _entityFormData: (e: unknown) => Record<string, unknown> };
+    expect(ge._entityFormData(group).fill_width).toBe(false);
+    ge._handleEntityChange([0, 0], ev({ ...ge._entityFormData(group), fill_width: true }));
+    expect(groupHandler.mock.calls[0][0].detail.config.rows[0].entities[0].fill_width).toBe(true);
+    ge._handleEntityChange([0, 0], ev({ ...ge._entityFormData(group), fill_width: false }));
+    expect(groupHandler.mock.calls[1][0].detail.config.rows[0].entities[0]).not.toHaveProperty("fill_width");
+  });
+
+  it("folds a row's settings away above its entities", async () => {
+    const { el } = await buildEditor();
+    toDispose.push(el);
+    await el.updateComplete;
+    const rowForm = el.shadowRoot!.querySelector(".row-content > ha-form") as unknown as {
+      schema: Array<{ type?: string; title?: string; schema?: unknown[] }>;
+      data: Record<string, unknown>;
+    };
+    expect(rowForm.schema).toHaveLength(1);
+    expect(rowForm.schema[0]).toMatchObject({ type: "expandable", title: "Settings for this row", flatten: true });
+    const names = (schema: any[]): string[] =>
+      schema.flatMap((f) => (f.schema ? names(f.schema) : f.name ? [f.name] : []));
+    expect(names(rowForm.schema)).toEqual(["justify", "group_style", "label", "label_style", "scale", "fill_width"]);
+    expect(rowForm.data.fill_width).toBe(false);
+  });
+
   it("adds, edits, reorders and removes colour rules on a seven-segment display", async () => {
     const { el } = await buildEditor(); // rows[1].entities[0] is the seven_segment
     toDispose.push(el);
@@ -321,6 +372,215 @@ describe("retro-controlpanel-card-editor", () => {
     const ent = handler.mock.calls[0][0].detail.config.rows[0].entities[0];
     expect(ent.num_digits).toBe(6);
     expect(ent.color_rules).toEqual([{ color: "red", above: 25 }]);
+  });
+
+  describe("table", () => {
+    type TableEditor = {
+      _handleEntityChange: (path: number[], ev: CustomEvent) => void;
+      _addTableColumn: (path: number[]) => void;
+      _removeTableColumn: (path: number[], ci: number) => void;
+      _moveTableColumn: (path: number[], ci: number, delta: number) => void;
+      _handleTableColumnChange: (path: number[], ci: number, ev: CustomEvent) => void;
+      _addTableRow: (path: number[]) => void;
+      _handleTableRowChange: (path: number[], ri: number, count: number, ev: CustomEvent) => void;
+    };
+    const changed = (value: Record<string, unknown>) => new CustomEvent("value-changed", { detail: { value } });
+
+    /** An editor whose config-changed results are fed back in, like HA does. */
+    async function tableEditor(table: Record<string, unknown>) {
+      const hass = makeHass({});
+      const el = await mount<RetroControlPanelCardEditor>("retro-controlpanel-card-editor", (n) => {
+        n.hass = hass;
+        n.setConfig({ type: "custom:retro-controlpanel-card", rows: [{ entities: [table as never] }] });
+      });
+      toDispose.push(el);
+      let latest: any;
+      el.addEventListener("config-changed", (ev) => {
+        latest = (ev as CustomEvent).detail.config;
+        el.setConfig(latest);
+      });
+      return { editor: el as unknown as TableEditor, table: () => latest.rows[0].entities[0] };
+    }
+
+    it("switching a control to a table seeds an empty rows list", async () => {
+      const { editor, table } = await tableEditor({ type: "seven_segment", entity: "sensor.temp", num_digits: 4 });
+      editor._handleEntityChange([0, 0], changed({ type: "table", entity: "sensor.temp", num_digits: 4 }));
+      expect(table()).toEqual({ type: "table", rows: [] });
+    });
+
+    it("edits columns, dropping cleared fields and keeping YAML-only ones", async () => {
+      const { editor, table } = await tableEditor({
+        type: "table",
+        columns: [{ header: "°C", color_rules: [{ color: "blue", below: 5 }] }],
+        rows: [],
+      });
+      editor._handleTableColumnChange([0, 0], 0, changed({
+        header: "°C", color_rules: [{ color: "blue", below: 5 }],
+        display_mode: "number", color: "", unit: "", num_digits: 3, maximum_fraction_digits: undefined,
+      }));
+      expect(table().columns).toEqual([{ header: "°C", color_rules: [{ color: "blue", below: 5 }], num_digits: 3 }]);
+      editor._addTableColumn([0, 0]);
+      expect(table().columns).toHaveLength(2);
+    });
+
+    it("edits a row's label and entities, keeping a cell's own settings", async () => {
+      const { editor, table } = await tableEditor({
+        type: "table",
+        columns: [{ header: "°C" }, { header: "RH %" }],
+        rows: [{ label: "LIVING", cells: ["sensor.a", { entity: "sensor.b", color: "blue" }] }],
+      });
+      editor._handleTableRowChange([0, 0], 0, 2, changed({ label: "LOUNGE", cell_0: "sensor.c", cell_1: "sensor.d" }));
+      expect(table().rows).toEqual([{ label: "LOUNGE", cells: ["sensor.c", { entity: "sensor.d", color: "blue" }] }]);
+      // Clearing the last entity leaves no trailing empty cell behind.
+      editor._handleTableRowChange([0, 0], 0, 2, changed({ label: "", cell_0: "sensor.c", cell_1: "" }));
+      expect(table().rows).toEqual([{ cells: ["sensor.c"] }]);
+      editor._addTableRow([0, 0]);
+      expect(table().rows).toHaveLength(2);
+    });
+
+    it("removing or moving a column takes its cells along", async () => {
+      const { editor, table } = await tableEditor({
+        type: "table",
+        columns: [{ header: "A" }, { header: "B" }, { header: "C" }],
+        rows: [{ cells: ["sensor.a", "sensor.b", "sensor.c"] }, { cells: ["sensor.x"] }],
+      });
+      editor._moveTableColumn([0, 0], 0, 1);
+      expect(table().columns.map((c: any) => c.header)).toEqual(["B", "A", "C"]);
+      expect(table().rows).toEqual([{ cells: ["sensor.b", "sensor.a", "sensor.c"] }, { cells: [null, "sensor.x"] }]);
+      editor._removeTableColumn([0, 0], 1);
+      expect(table().columns.map((c: any) => c.header)).toEqual(["B", "C"]);
+      expect(table().rows).toEqual([{ cells: ["sensor.b", "sensor.c"] }, { cells: [] }]);
+    });
+
+    it("keeps a row's settings, even ones that equal a control's default", async () => {
+      const { editor, table } = await tableEditor({
+        type: "table",
+        columns: [{ display_mode: "countdown" }],
+        rows: [{ label: "NOW", cells: ["sensor.a"] }],
+      });
+      // "number" is the default, but here it overrides the column's countdown.
+      editor._handleTableRowChange([0, 0], 0, 1, changed({
+        label: "NOW", cell_0: "sensor.a", display_mode: "number", show_seconds: false, color: "", num_digits: 4,
+      }));
+      expect(table().rows).toEqual([{
+        label: "NOW", cells: ["sensor.a"], display_mode: "number", show_seconds: false, num_digits: 4,
+      }]);
+    });
+
+    it("drops a column's settings that are the default anyway", async () => {
+      const { editor, table } = await tableEditor({ type: "table", cell_type: "vu_meter", columns: [{}], rows: [] });
+      editor._handleTableColumnChange([0, 0], 0, changed({
+        header: "RH", orientation: "horizontal", show_value: false, show_scale: true, value_color: "", min: 0,
+      }));
+      expect(table().columns).toEqual([{ header: "RH", show_scale: true, min: 0 }]);
+      editor._handleTableColumnChange([0, 0], 0, changed({ header: "RH", orientation: "vertical" }));
+      expect(table().columns[0].orientation).toBe("vertical");
+    });
+
+    it("a new cell type drops the settings it doesn't have", async () => {
+      const { editor, table } = await tableEditor({
+        type: "table",
+        columns: [{ header: "°C", num_digits: 3, color: "blue" }],
+        rows: [{ label: "LIVING", num_digits: 2, cells: [{ entity: "sensor.a", maximum_fraction_digits: 1, color: "red" }] }],
+      });
+      editor._handleEntityChange([0, 0], changed({ type: "table", cell_type: "button", scale: 1 }));
+      expect(table()).toEqual({
+        type: "table",
+        cell_type: "button",
+        columns: [{ header: "°C", color: "blue" }],
+        rows: [{ label: "LIVING", cells: [{ entity: "sensor.a", color: "red" }] }],
+      });
+      // Seven-segment is the default, so it isn't written out.
+      editor._handleEntityChange([0, 0], changed({ type: "table", cell_type: "seven_segment", scale: 1 }));
+      expect(table()).not.toHaveProperty("cell_type");
+    });
+
+    it("shows the cell type's own settings for columns and rows", async () => {
+      const { editor } = await tableEditor({
+        type: "table", cell_type: "flip_switch", columns: [{ header: "LIGHT" }], rows: [{ cells: ["light.a"] }],
+      });
+      await (editor as unknown as RetroControlPanelCardEditor).updateComplete;
+      const forms = [...(editor as unknown as HTMLElement).shadowRoot!.querySelectorAll("ha-form")] as any[];
+      const names = (schema: any[]): string[] =>
+        schema.flatMap((f) => (f.schema ? names(f.schema) : f.name ? [f.name] : []));
+      const column = forms.find((f) => names(f.schema).includes("header"));
+      const row = forms.find((f) => names(f.schema).includes("cell_0"));
+      expect(names(column.schema)).toEqual(expect.arrayContaining(["indicator", "indicator_position", "tap_action"]));
+      expect(names(column.schema)).not.toContain("num_digits");
+      // The header and group stay in view; the settings fold away.
+      expect(names([column.schema[0]])).toEqual(["header", "group"]);
+      expect(column.schema[1]).toMatchObject({ type: "expandable", title: "Settings for this column" });
+      expect(names(row.schema)).toEqual(expect.arrayContaining(["label", "group", "cell_0", "indicator", "indicator_position"]));
+      // An unset row dropdown reads "use the column's".
+      expect(row.data.indicator).toBe("");
+    });
+
+    it("a row or column with its own type (set in YAML) gets that type's settings", async () => {
+      const { editor } = await tableEditor({
+        type: "table",
+        cell_type: "flip_switch",
+        columns: [{ header: "A" }, { header: "B", type: "seven_segment" }],
+        rows: [{ label: "BUTTONS", type: "button", cells: ["light.a", "sensor.b"] }],
+      });
+      await (editor as unknown as RetroControlPanelCardEditor).updateComplete;
+      const forms = [...(editor as unknown as HTMLElement).shadowRoot!.querySelectorAll("ha-form")] as any[];
+      const names = (schema: any[]): string[] =>
+        schema.flatMap((f) => (f.schema ? names(f.schema) : f.name ? [f.name] : []));
+      const [a, b] = forms.filter((f) => names(f.schema).includes("header"));
+      const row = forms.find((f) => names(f.schema).includes("cell_0"));
+      expect(names(a.schema)).toContain("indicator_position"); // the table's type
+      expect(names(b.schema)).toContain("num_digits"); // its own
+      expect(names(row.schema)).toContain("text"); // a button row
+      expect(names(row.schema)).not.toContain("indicator_position");
+      // And the type survives an edit, though no field shows it.
+      expect(row.data.type).toBe("button");
+    });
+
+    it("a new cell type leaves a table that mixes types alone", async () => {
+      const mixed = {
+        type: "table",
+        columns: [{ header: "°C", num_digits: 3 }],
+        rows: [{ label: "BUTTONS", type: "button", text: "GO", cells: ["sensor.a"] }],
+      };
+      const { editor, table } = await tableEditor(mixed);
+      editor._handleEntityChange([0, 0], changed({ type: "table", cell_type: "flip_switch", scale: 1 }));
+      expect(table()).toEqual({ ...mixed, cell_type: "flip_switch" });
+    });
+
+    it("edits the groups of columns and rows, and drops a cleared one", async () => {
+      const { editor, table } = await tableEditor({
+        type: "table",
+        columns: [{ header: "AIRBOX" }],
+        rows: [{ label: "°C", cells: ["sensor.a"] }],
+      });
+      editor._handleTableColumnChange([0, 0], 0, changed({ header: "AIRBOX", group: "LIVING" }));
+      editor._handleTableRowChange([0, 0], 0, 1, changed({ label: "°C", group: "UPSTAIRS", cell_0: "sensor.a" }));
+      expect(table().columns).toEqual([{ header: "AIRBOX", group: "LIVING" }]);
+      expect(table().rows).toEqual([{ label: "°C", group: "UPSTAIRS", cells: ["sensor.a"] }]);
+      editor._handleTableColumnChange([0, 0], 0, changed({ header: "AIRBOX", group: "" }));
+      editor._handleTableRowChange([0, 0], 0, 1, changed({ label: "°C", group: "", cell_0: "sensor.a" }));
+      expect(table().columns).toEqual([{ header: "AIRBOX" }]);
+      expect(table().rows).toEqual([{ label: "°C", cells: ["sensor.a"] }]);
+    });
+
+    it("a new cell type keeps the groups", async () => {
+      const { editor, table } = await tableEditor({
+        type: "table",
+        columns: [{ header: "AIRBOX", group: "LIVING", num_digits: 3 }],
+        rows: [{ label: "°C", group: "UPSTAIRS", cells: ["sensor.a"] }],
+      });
+      editor._handleEntityChange([0, 0], changed({ type: "table", cell_type: "flip_switch", scale: 1 }));
+      expect(table().columns).toEqual([{ header: "AIRBOX", group: "LIVING" }]);
+      expect(table().rows).toEqual([{ label: "°C", group: "UPSTAIRS", cells: ["sensor.a"] }]);
+    });
+
+    it("writes equal_columns only when it is on", async () => {
+      const { editor, table } = await tableEditor({ type: "table", rows: [] });
+      editor._handleEntityChange([0, 0], changed({ type: "table", scale: 1, equal_columns: true }));
+      expect(table().equal_columns).toBe(true);
+      editor._handleEntityChange([0, 0], changed({ type: "table", scale: 1, equal_columns: false }));
+      expect(table()).not.toHaveProperty("equal_columns");
+    });
   });
 
   it("exposes getConfigElement on the main card", async () => {

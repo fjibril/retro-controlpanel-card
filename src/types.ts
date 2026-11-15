@@ -31,13 +31,27 @@ export interface BaseControlConfig {
   double_tap_action?: ActionConfig;
 }
 
+/** Tap / hold / double-tap actions, in the format Home Assistant's action editor writes. */
 export type ActionConfig =
   | { action: "toggle" }
-  | { action: "more-info" }
+  | { action: "more-info"; entity?: string }
   | { action: "none" }
-  | { action: "navigate"; navigation_path: string }
+  | { action: "navigate"; navigation_path: string; navigation_replace?: boolean }
   | { action: "url"; url_path: string }
-  | { action: "call-service"; service: string; service_data?: Record<string, unknown> };
+  | {
+      action: "perform-action";
+      perform_action: string;
+      data?: Record<string, unknown>;
+      target?: Record<string, unknown>;
+    }
+  /** The older name of perform-action, still found in existing configs. */
+  | {
+      action: "call-service";
+      service: string;
+      service_data?: Record<string, unknown>;
+      data?: Record<string, unknown>;
+      target?: Record<string, unknown>;
+    };
 
 /**
  * What a seven-segment display shows:
@@ -164,11 +178,84 @@ export interface GroupConfig {
   group_style?: RowGroupStyle;
   /** Size multiplier for this cluster, on top of the panel's (and row's) scale. */
   scale?: number;
+  /**
+   * Grow to fill the rest of its line (sharing it with other groups that
+   * fill), rather than hugging its controls.
+   */
+  fill_width?: boolean;
   entities: ControlConfig[];
   /** CSS width override. */
   width?: string;
   /** CSS height override. */
   height?: string;
+}
+
+/** The control types a table's cells can be (one type per table). */
+export type TableCellType = EntityControlConfig["type"];
+
+/** A control's settings, without what a table decides for its cells. */
+type CellSettings<T> = Omit<T, "type" | "entity" | "label">;
+
+/**
+ * Settings a table column, row or cell gives its cells: those of the cells'
+ * type. Settings of other types are ignored.
+ */
+export type TableCellOptions = Partial<
+  CellSettings<SevenSegmentConfig> &
+    CellSettings<VuMeterConfig> &
+    CellSettings<GaugeConfig> &
+    CellSettings<FlipSwitchConfig> &
+    CellSettings<ButtonConfig>
+> & {
+  /**
+   * A different control type for the cells of this column or row, or for
+   * this cell (YAML only; the editor sets the type per table). The cell's
+   * own wins, then its row's, then its column's, then the table's cell_type.
+   */
+  type?: TableCellType;
+};
+
+export interface TableColumnConfig extends TableCellOptions {
+  /** Column heading, e.g. a unit such as "°C". Keeps its case. */
+  header?: string;
+  /**
+   * Heading over a set of columns, e.g. a room. Neighbouring columns with the
+   * same group share one heading, drawn as a bracket across them.
+   */
+  group?: string;
+}
+
+export interface TableCellConfig extends TableCellOptions {
+  entity?: string;
+}
+
+export interface TableRowConfig extends TableCellOptions {
+  /** Row label, shown left of the cells. */
+  label?: string;
+  /**
+   * Name for a set of rows, e.g. a room. Neighbouring rows with the same group
+   * share one name, left of a bracket that spans them.
+   */
+  group?: string;
+  /** One per column: an entity id, a cell config, or null / "" for an empty cell. */
+  cells: Array<string | TableCellConfig | null>;
+}
+
+/**
+ * A dense matrix of controls: row labels on the left, column headers on top,
+ * a compact control in every cell. A cell takes its column's settings, then
+ * its row's, then its own; the whole table scales with `scale`.
+ */
+export interface TableConfig {
+  type: "table";
+  /** What the cells are, unless a column, row or cell says otherwise. Defaults to "seven_segment". */
+  cell_type?: TableCellType;
+  /** Size of the whole table relative to its row. */
+  scale?: number;
+  /** Make every column as wide as the widest one. */
+  equal_columns?: boolean;
+  columns?: TableColumnConfig[];
+  rows: TableRowConfig[];
 }
 
 export type ControlConfig =
@@ -177,12 +264,13 @@ export type ControlConfig =
   | GaugeConfig
   | FlipSwitchConfig
   | ButtonConfig
-  | GroupConfig;
+  | GroupConfig
+  | TableConfig;
 
 export type ControlType = ControlConfig["type"];
 
-/** The controls that render an entity (everything except layout groups). */
-export type EntityControlConfig = Exclude<ControlConfig, GroupConfig>;
+/** The controls that render a single entity (everything except groups and tables). */
+export type EntityControlConfig = Exclude<ControlConfig, GroupConfig | TableConfig>;
 
 export interface RowConfig {
   entities: ControlConfig[];
@@ -196,6 +284,8 @@ export interface RowConfig {
   label_style?: LabelStyle;
   /** Size multiplier for this row, on top of the panel's scale. */
   scale?: number;
+  /** Stretch the row's frame across the whole panel, rather than hugging its controls. */
+  fill_width?: boolean;
 }
 
 export interface RetroControlPanelCardConfig extends LovelaceCardConfig {

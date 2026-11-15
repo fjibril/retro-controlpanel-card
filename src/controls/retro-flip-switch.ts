@@ -34,6 +34,10 @@ export class RetroFlipSwitch extends RetroControlBase {
       width: var(--cell-w, auto);
       height: var(--cell-h, auto);
     }
+    /* A table cell: the switch alone (its LED stays beside it). */
+    :host([compact]) retro-label {
+      display: none;
+    }
     .row {
       display: inline-flex;
       align-items: center;

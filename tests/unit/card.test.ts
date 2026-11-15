@@ -282,6 +282,27 @@ describe("retro-controlpanel-card rendering", () => {
     expect(groupCell?.getAttribute("style")).toContain("font-size: 1.5em");
   });
 
+  it("marks a row or group that fills the width, and only those", async () => {
+    const el = await buildRows([
+      {
+        group_style: "screwed",
+        fill_width: true,
+        entities: [
+          { type: "group", group_style: "embossed", label: "WIDE", fill_width: true, entities: [flip] },
+          { type: "group", group_style: "embossed", label: "SNUG", entities: [flip] },
+        ],
+      },
+      { group_style: "screwed", entities: [flip] },
+    ]);
+    const rows = el.shadowRoot!.querySelectorAll(".row");
+    expect([...rows].map((r) => r.classList.contains("fill"))).toEqual([true, false]);
+    const groups = el.shadowRoot!.querySelectorAll(".cell.group-cell");
+    expect([...groups].map((g) => g.classList.contains("fill"))).toEqual([true, false]);
+    // The class sits beside the attribute parts without disturbing them.
+    expect(groups[0].querySelector("retro-flip-switch")).not.toBeNull();
+    expect(rows[0].getAttribute("style")).toContain("--row-justify: center");
+  });
+
   it("ignores a scale of 1 or a non-positive scale", async () => {
     const el = await buildRows([
       { scale: 1, entities: [flip] },
@@ -291,6 +312,40 @@ describe("retro-controlpanel-card rendering", () => {
       expect(row.getAttribute("style")).not.toContain("font-size");
     }
     expect(el.shadowRoot!.querySelector(".row > .cell")?.hasAttribute("style")).toBe(false);
+  });
+
+  it("renders a table control in a row", async () => {
+    const el = await buildRows([
+      { entities: [{ type: "table", rows: [{ label: "LIVING", cells: ["sensor.temp"] }] }, flip] },
+    ]);
+    expect(el.shadowRoot!.querySelector("retro-table")).not.toBeNull();
+  });
+
+  it("setConfig rejects a table without rows or with a row without cells", async () => {
+    const el = document.createElement("retro-controlpanel-card") as RetroControlPanelCard;
+    toDispose.push(el);
+    expect(() => el.setConfig({ ...sampleConfig, rows: [{ entities: [{ type: "table" } as never] }] }))
+      .toThrow(/table must have a 'rows' array/);
+    expect(() => el.setConfig({ ...sampleConfig, rows: [{ entities: [{ type: "table", rows: [{ label: "X" }] } as never] }] }))
+      .toThrow(/table row 0 must have a 'cells' array/);
+    expect(() => el.setConfig({ ...sampleConfig, rows: [{ entities: [{ type: "table", cell_type: "group", rows: [] } as never] }] }))
+      .toThrow(/unknown table cell_type 'group'/);
+    expect(() => el.setConfig({ ...sampleConfig, rows: [{ entities: [{
+      type: "table", rows: [{ cells: ["sensor.temp"] }, { type: "switch", cells: [] }],
+    } as never] }] })).toThrow(/unknown table row 1 type 'switch'/);
+    expect(() => el.setConfig({ ...sampleConfig, rows: [{ entities: [{
+      type: "table", rows: [{ cells: [{ entity: "sensor.temp", type: "knob" }] }],
+    } as never] }] })).toThrow(/unknown table row 0 cell 0 type 'knob'/);
+  });
+
+  it("renders a table of another cell type with compact cells", async () => {
+    const el = await buildRows([
+      { entities: [{ type: "table", cell_type: "flip_switch", rows: [{ label: "PUMP", cells: ["input_boolean.toggle"] }] }] },
+    ]);
+    const table = el.shadowRoot!.querySelector("retro-table")!;
+    await table.updateComplete;
+    const sw = table.shadowRoot!.querySelector("retro-flip-switch");
+    expect(sw?.hasAttribute("compact")).toBe(true);
   });
 
   it("applies scale via CSS custom property when configured", async () => {
