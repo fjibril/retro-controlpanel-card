@@ -25,9 +25,22 @@ export const SEGMENT_MAP: Record<string, string> = {
   " ": "",
 };
 
+/**
+ * Letters as seven segments can draw them, keyed by lower case. Each letter
+ * uses its most legible form, mixing cases the way real LCDs do ("HEAt",
+ * "IdLE", "OFF"). A few (k, m, v, w, x) can only be approximated.
+ */
+const LETTER_SEGMENTS: Record<string, string> = {
+  a: "abcefg", b: "cdefg", c: "adef", d: "bcdeg", e: "adefg", f: "aefg",
+  g: "acdef", h: "bcefg", i: "ef", j: "bcde", k: "befg", l: "def",
+  m: "abcef", n: "ceg", o: "abcdef", p: "abefg", q: "abcfg", r: "eg",
+  s: "acdfg", t: "defg", u: "bcdef", v: "cde", w: "bcdef", x: "bcefg",
+  y: "bcdfg", z: "abdeg", _: "d", "=": "dg", "°": "abfg",
+};
+
 /** Render a single glyph as an SVG of seven segments. */
 export function digitSvg(ch: string) {
-  const segs = SEGMENT_MAP[ch] ?? "";
+  const segs = SEGMENT_MAP[ch] ?? LETTER_SEGMENTS[ch] ?? "";
   const on = (name: string) => (segs.includes(name) ? "seg-on" : "seg-off");
   return svg`
     <svg viewBox="0 0 50 80" preserveAspectRatio="xMidYMid meet"
@@ -41,6 +54,21 @@ export function digitSvg(ch: string) {
       <polygon class=${on("g")} points="15,37 35,37 38,40 35,43 15,43 12,40" />
     </svg>
   `;
+}
+
+/**
+ * Spell a text state on `slots` digit positions: cut to fit, right-aligned
+ * like numbers, characters the segments can't draw left blank.
+ */
+export function textTokens(text: string, slots: number): string[] {
+  const glyph = (ch: string): string => {
+    if (SEGMENT_MAP[ch] !== undefined) return ch;
+    const lower = ch.toLowerCase();
+    return LETTER_SEGMENTS[lower] !== undefined ? lower : " ";
+  };
+  const tokens = [...text.trim()].slice(0, Math.max(0, slots)).map(glyph);
+  while (tokens.length < slots) tokens.unshift(" ");
+  return tokens;
 }
 
 /**

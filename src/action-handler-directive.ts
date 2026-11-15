@@ -43,8 +43,17 @@ export interface ActionHandlerOptions {
 interface BoundState {
   options: ActionHandlerOptions;
   start: (ev: Event) => void;
+  move: (ev: Event) => void;
   end: (ev: Event) => void;
 }
+
+/**
+ * How far (CSS px) a finger may wander during a press and still count as a
+ * tap or hold. Pressing rolls the contact point a little, and cheap
+ * capacitive panels jitter; Chrome's own limit (~15px) is too tight for
+ * that. Beyond this the gesture is a drag or scroll and fires nothing.
+ */
+const MOVE_TOLERANCE_PX = 24;
 
 interface ElementWithBinding extends Element {
   actionHandler?: BoundState;
@@ -61,6 +70,10 @@ class RetroActionHandler extends HTMLElement {
   private dblClickTimer: number | undefined;
   /** Timestamp of the last touchend, to drop the synthetic click that follows. */
   private lastTouchEnd = 0;
+  /** Where the current touch started, and whether it has wandered too far since. */
+  private touchStartX = 0;
+  private touchStartY = 0;
+  private touchMoved = false;
 
   public bind(element: Element, options: ActionHandlerOptions): void {
     const el = element as ElementWithBinding;
@@ -75,13 +88,23 @@ class RetroActionHandler extends HTMLElement {
       }
       // Options changed - unbind old listeners and re-bind.
       element.removeEventListener("touchstart", el.actionHandler.start);
+      element.removeEventListener("touchmove", el.actionHandler.move);
       element.removeEventListener("touchend", el.actionHandler.end);
       element.removeEventListener("touchcancel", el.actionHandler.end);
       element.removeEventListener("mousedown", el.actionHandler.start);
       element.removeEventListener("click", el.actionHandler.end);
     }
 
-    const start = (_ev: Event) => {
+    const start = (ev: Event) => {
+      if (ev.type === "touchstart") {
+        const t = (ev as TouchEvent).touches[0];
+        this.touchStartX = t?.clientX ?? 0;
+        this.touchStartY = t?.clientY ?? 0;
+        this.touchMoved = false;
+      } else if (Date.now() - this.lastTouchEnd < 700) {
+        // The compatibility mousedown a browser may send after a touch.
+        return;
+      }
       this.held = false;
       if (options.hasHold) {
         clearTimeout(this.timer);
@@ -91,14 +114,27 @@ class RetroActionHandler extends HTMLElement {
       }
     };
 
+    const move = (ev: Event) => {
+      if (this.touchMoved) return;
+      const t = (ev as TouchEvent).touches[0];
+      if (!t) return;
+      const dx = t.clientX - this.touchStartX;
+      const dy = t.clientY - this.touchStartY;
+      if (dx * dx + dy * dy > MOVE_TOLERANCE_PX * MOVE_TOLERANCE_PX) {
+        // A drag or scroll, not a press: it fires nothing, not even a hold.
+        this.touchMoved = true;
+        clearTimeout(this.timer);
+        this.timer = undefined;
+      }
+    };
+
     const end = (ev: Event) => {
       if (options.disabled) return;
 
       const isTouch = ev.type === "touchend" || ev.type === "touchcancel";
-      // A tap on a touch screen fires touchend AND a synthesized click ~300ms
-      // later. Without this guard both run, firing the action twice (a toggle
-      // ends up back where it started - the "flicker"). Always clear the timer,
-      // but drop the ghost click.
+      // After a touch the browser may also send a click (~300ms later). That
+      // second pass would fire the action again (a toggle ends up back where
+      // it started - the "flicker"), so drop it.
       const isGhostClick = ev.type === "click" && Date.now() - this.lastTouchEnd < 700;
 
       clearTimeout(this.timer);
@@ -107,8 +143,10 @@ class RetroActionHandler extends HTMLElement {
       if (isGhostClick) return;
       if (isTouch) {
         this.lastTouchEnd = Date.now();
-        // Belt-and-suspenders: also ask the browser not to emit the ghost click.
+        // Taps are handled right here, so the browser's click isn't needed.
         if (ev.cancelable) ev.preventDefault();
+        // The browser took the gesture over, or the finger wandered off: no action.
+        if (ev.type === "touchcancel" || this.touchMoved) return;
       }
 
       if (this.held) {
@@ -132,13 +170,18 @@ class RetroActionHandler extends HTMLElement {
       }
     };
 
-    el.actionHandler = { options, start, end };
+    el.actionHandler = { options, start, move, end };
 
-    if ("ontouchstart" in window) {
-      element.addEventListener("touchstart", start, { passive: true });
-      element.addEventListener("touchend", end);
-      element.addEventListener("touchcancel", end);
-    }
+    // Touch is handled directly, always. Feature detection ('ontouchstart' in
+    // window) is not enough: browsers that receive touch input without
+    // advertising touch support - e.g. headless Chrome driven by a remote
+    // display such as RemoteWebView - would otherwise rely on the click the
+    // browser derives from a touch, which it skips when the finger moves more
+    // than a few pixels, and long presses could never become holds.
+    element.addEventListener("touchstart", start, { passive: true });
+    element.addEventListener("touchmove", move, { passive: true });
+    element.addEventListener("touchend", end);
+    element.addEventListener("touchcancel", end);
     element.addEventListener("mousedown", start, { passive: true });
     element.addEventListener("click", end);
   }

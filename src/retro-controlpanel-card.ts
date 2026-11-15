@@ -14,40 +14,23 @@ import type {
   RetroControlPanelCardConfig,
   RowConfig,
   RowGroupStyle,
+  TableConfig,
 } from "./types.js";
 import { panelStyles } from "./styles/panel-styles.js";
 import { themeStyles, DEFAULT_THEME, ALL_THEMES } from "./styles/themes.js";
 
-// Register every control as a side effect so they're available before the
-// card tries to instantiate them.
-import "./controls/retro-seven-segment.js";
-import "./controls/retro-vu-meter.js";
-import "./controls/retro-gauge.js";
-import "./controls/retro-flip-switch.js";
-import "./controls/retro-button.js";
+// Importing the renderer registers every control as a side effect, so they
+// exist before the card instantiates them.
+import { renderEntityControl } from "./controls/render-control.js";
 import "./controls/retro-label.js";
+import "./controls/retro-table.js";
+import { scaleStyle } from "./controls/scale-style.js";
 // Editor element is bundled inline so HA can find it via getConfigElement().
 import "./editor.js";
 
-const KNOWN_TYPES = new Set([
-  "seven_segment",
-  "vu_meter",
-  "gauge",
-  "flip_switch",
-  "button",
-  "group",
-]);
-
-/**
- * Inline font-size for a row or group `scale`. Every control is sized in em,
- * so this multiplies onto the panel's (and any enclosing row's) scale. Empty
- * when unset, 1 or not a positive number.
- */
-function scaleStyle(scale: number | undefined): string {
-  return typeof scale === "number" && Number.isFinite(scale) && scale > 0 && scale !== 1
-    ? `font-size: ${scale}em;`
-    : "";
-}
+/** What a table's cells can be. */
+const CELL_TYPES = new Set(["seven_segment", "vu_meter", "gauge", "flip_switch", "button"]);
+const KNOWN_TYPES = new Set([...CELL_TYPES, "group", "table"]);
 
 /** Recursive entity validation - groups carry their own entities array. */
 function validateEntities(entities: ControlConfig[], location: string): void {
@@ -67,6 +50,31 @@ function validateEntities(entities: ControlConfig[], location: string): void {
         throw new Error(`${location} entity ${ei}: group must have an 'entities' array`);
       }
       validateEntities(g.entities, `${location} > group ${ei}`);
+    }
+    if (ent.type === "table") {
+      const t = ent as TableConfig;
+      if (!Array.isArray(t.rows)) {
+        throw new Error(`${location} entity ${ei}: table must have a 'rows' array`);
+      }
+      const checkCellType = (type: unknown, what: string) => {
+        if (type !== undefined && !CELL_TYPES.has(type as string)) {
+          throw new Error(
+            `${location} entity ${ei}: unknown table ${what} '${String(type)}'. ` +
+            `Expected one of: ${[...CELL_TYPES].join(", ")}`,
+          );
+        }
+      };
+      checkCellType(t.cell_type, "cell_type");
+      for (const [ci, col] of (t.columns ?? []).entries()) checkCellType(col?.type, `column ${ci} type`);
+      for (const [ri, row] of t.rows.entries()) {
+        if (!row || typeof row !== "object" || !Array.isArray(row.cells)) {
+          throw new Error(`${location} entity ${ei}: table row ${ri} must have a 'cells' array`);
+        }
+        checkCellType(row.type, `row ${ri} type`);
+        for (const [ci, cell] of row.cells.entries()) {
+          if (cell && typeof cell === "object") checkCellType(cell.type, `row ${ri} cell ${ci} type`);
+        }
+      }
     }
   }
 }
@@ -234,8 +242,9 @@ export class RetroControlPanelCard extends LitElement {
       row.label_style,
       defaultLabelStyle,
     );
+    const fill = row.fill_width ? "fill" : "";
     return html`
-      <div class="row" style="--row-justify: ${justify}; ${scaleStyle(row.scale)}">${content}</div>
+      <div class="row ${fill}" style="--row-justify: ${justify}; ${scaleStyle(row.scale)}">${content}</div>
     `;
   }
 
@@ -306,48 +315,19 @@ export class RetroControlPanelCard extends LitElement {
           g.label_style,
           defaultLabelStyle,
         );
-        return html`<div class="cell group-cell" style=${scaleStyle(g.scale) || nothing}>${inner}</div>`;
+        const fill = g.fill_width ? "fill" : "";
+        return html`<div class="cell group-cell ${fill}" style=${scaleStyle(g.scale) || nothing}>${inner}</div>`;
       }
-      case "seven_segment":
+      case "table":
         return html`<div class="cell">
-          <retro-seven-segment
+          <retro-table
             .hass=${this.hass}
             .config=${ent}
             .labelStyle=${labelStyle}
-          ></retro-seven-segment>
+          ></retro-table>
         </div>`;
-      case "vu_meter":
-        return html`<div class="cell">
-          <retro-vu-meter
-            .hass=${this.hass}
-            .config=${ent}
-            .labelStyle=${labelStyle}
-          ></retro-vu-meter>
-        </div>`;
-      case "gauge":
-        return html`<div class="cell">
-          <retro-gauge
-            .hass=${this.hass}
-            .config=${ent}
-            .labelStyle=${labelStyle}
-          ></retro-gauge>
-        </div>`;
-      case "flip_switch":
-        return html`<div class="cell">
-          <retro-flip-switch
-            .hass=${this.hass}
-            .config=${ent}
-            .labelStyle=${labelStyle}
-          ></retro-flip-switch>
-        </div>`;
-      case "button":
-        return html`<div class="cell">
-          <retro-button
-            .hass=${this.hass}
-            .config=${ent}
-            .labelStyle=${labelStyle}
-          ></retro-button>
-        </div>`;
+      default:
+        return html`<div class="cell">${renderEntityControl(ent, this.hass, labelStyle)}</div>`;
     }
   }
 }

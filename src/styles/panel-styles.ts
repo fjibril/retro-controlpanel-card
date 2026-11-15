@@ -130,6 +130,28 @@ export const panelStyles = css`
     flex-shrink: 1;
   }
 
+  /* Fill width. A frame sizes itself before its controls wrap: it wants its
+     one-line width, gets at most its parent's, and its controls then wrap
+     inside it. So a frame whose controls wrap is already as wide as its
+     parent, and these rules make that the deliberate look. A row's frame
+     stretches across the panel; a group grows into the rest of its line,
+     sharing it with the other groups there that fill. */
+  .row.fill > .row-group {
+    flex: 1 1 auto;
+  }
+  /* Inside a row's frame, the row's justify places the controls too: a frame
+     that fills (or whose controls wrap) has room to spare. */
+  .row > .row-group > .group-inner {
+    justify-content: var(--row-justify, center);
+  }
+  .cell.group-cell.fill {
+    flex-grow: 1;
+    justify-content: center;
+  }
+  .cell.group-cell.fill > .row-group {
+    flex: 1 1 auto;
+  }
+
   /* ---- Row grouping frames ----
      A row-group wraps a row's (or nested group's) cells in a decorative frame
      and/or a title label. The wrapper is column-flex so an optional label sits
@@ -142,7 +164,10 @@ export const panelStyles = css`
     align-items: center;
     border-radius: 0.4em;
   }
+  /* As wide as its frame, so that groups inside it that fill have the
+     frame's width to grow into; its controls stay centred. */
   .group-inner {
+    align-self: stretch;
     display: flex;
     flex-wrap: wrap;
     align-items: flex-end;
