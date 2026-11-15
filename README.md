@@ -1,6 +1,6 @@
 # Retro Control Panel Card
 
-A Home Assistant Lovelace **custom card** that renders any handful of entities
+A Home Assistant **custom dashboard card** that renders any handful of entities
 as a chunky, retro-futurist control panel — the kind you'd find in a 1960s
 spy-movie villain lair, an old aircraft cockpit or a Cold-War submarine
 console.
@@ -38,12 +38,21 @@ Comes with:
 
 ## Installation
 
-### HACS (recommended)
+[![Open your Home Assistant instance and show this card in the Marketplace or HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=fjibril&repository=retro-controlpanel-card)
 
-1. In HACS → *Frontend* → ⋮ → **Custom repositories** add this repo's URL
-   (category: *Lovelace*).
-2. Install **Retro Control Panel Card**.
-3. Add the resource to your dashboard if HACS does not do it automatically:
+### Marketplace (Home Assistant 2026.11 and later)
+
+1. Go to **Settings → Marketplace** and search for **Retro Control Panel Card**.
+2. Open it, select **Install**, and confirm with **Install**.
+3. Reload your browser. The Marketplace adds the dashboard resource itself; if
+   you manage dashboard resources in YAML, add the one the install dialog shows.
+
+### HACS (before Home Assistant 2026.11)
+
+1. Open **HACS** and search for **Retro Control Panel Card**.
+2. Open it and select **Download**.
+3. Reload your browser. HACS adds the dashboard resource itself; if you manage
+   dashboard resources in YAML, add it yourself:
    ```yaml
    url: /hacsfiles/retro-controlpanel-card/retro-controlpanel-card.js
    type: module
@@ -51,7 +60,8 @@ Comes with:
 
 ### Manual
 
-1. Download `dist/retro-controlpanel-card.js` from the latest release.
+1. Download `retro-controlpanel-card.js` from the
+   [latest release](https://github.com/fjibril/retro-controlpanel-card/releases/latest).
 2. Drop it into `<config>/www/`.
 3. *Settings → Dashboards → ⋮ → Resources*:
    ```yaml
