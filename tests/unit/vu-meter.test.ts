@@ -84,12 +84,105 @@ describe("retro-vu-meter", () => {
     expect(wide.colourForSegment(9, 10)).toBe("yellow");
   });
 
-  it("yellow_threshold below green_threshold collapses the yellow zone", async () => {
-    // Inverted thresholds: yellow zone disappears, segments are green-then-red.
-    const inverted = await build({ green_threshold: 70, yellow_threshold: 30 }, "0");
-    toDispose.push(inverted);
-    expect(inverted.colourForSegment(6, 10)).toBe("green"); // 70% = upper green
-    expect(inverted.colourForSegment(7, 10)).toBe("red");   // beyond green & below yellow_top => red
+  describe("reversed colour order (green_threshold > yellow_threshold)", () => {
+    const colours = (el: RetroVuMeter, segments = 10) =>
+      Array.from({ length: segments }, (_, i) => el.colourForSegment(i, segments));
+
+    it("runs red -> yellow -> green from the bottom (0-20 red, 20-70 yellow, 70-100 green)", async () => {
+      const el = await build({ green_threshold: 70, yellow_threshold: 20 }, "0");
+      toDispose.push(el);
+      expect(colours(el)).toEqual([
+        "red", "red",                                   // 10%, 20%
+        "yellow", "yellow", "yellow", "yellow", "yellow", // 30%..70%
+        "green", "green", "green",                      // 80%..100%
+      ]);
+    });
+
+    it("treats each threshold as an inclusive boundary on the lower band", async () => {
+      // 20 segments = 5% each, so the boundaries land exactly on segments.
+      const el = await build({ green_threshold: 70, yellow_threshold: 20, segments: 20 }, "0");
+      toDispose.push(el);
+      expect(el.colourForSegment(3, 20)).toBe("red");     // 20% -> still red
+      expect(el.colourForSegment(4, 20)).toBe("yellow");  // 25%
+      expect(el.colourForSegment(13, 20)).toBe("yellow"); // 70% -> still yellow
+      expect(el.colourForSegment(14, 20)).toBe("green");  // 75%
+    });
+
+    it("has no red band when yellow_threshold is 0", async () => {
+      const el = await build({ green_threshold: 50, yellow_threshold: 0 }, "0");
+      toDispose.push(el);
+      expect(colours(el)).toEqual([
+        "yellow", "yellow", "yellow", "yellow", "yellow",
+        "green", "green", "green", "green", "green",
+      ]);
+    });
+
+    it("has no green band when green_threshold is 100", async () => {
+      const el = await build({ green_threshold: 100, yellow_threshold: 30 }, "0");
+      toDispose.push(el);
+      expect(colours(el)).toEqual([
+        "red", "red", "red",
+        "yellow", "yellow", "yellow", "yellow", "yellow", "yellow", "yellow",
+      ]);
+    });
+
+    it("applies the reversed colours to the rendered segments", async () => {
+      const el = await build({ green_threshold: 70, yellow_threshold: 20 }, "50");
+      toDispose.push(el);
+      const segs = Array.from(el.shadowRoot?.querySelectorAll(".seg") ?? []);
+      expect(segs.length).toBe(10);
+      expect(segs[0].classList.contains("red")).toBe(true);
+      expect(segs[4].classList.contains("yellow")).toBe(true);
+      expect(segs[9].classList.contains("green")).toBe(true);
+      // 50% of 10 segments lit: the 5 bottom ones (red, red, yellow x3).
+      const lit = segs.filter((s) => s.classList.contains("on"));
+      expect(lit.length).toBe(5);
+      expect(lit.every((s) => !s.classList.contains("green"))).toBe(true);
+    });
+  });
+
+  describe("normal colour order is kept when reversal isn't explicit", () => {
+    it("equal thresholds give green then red with no yellow band", async () => {
+      const el = await build({ green_threshold: 50, yellow_threshold: 50 }, "0");
+      toDispose.push(el);
+      expect(el.colourForSegment(4, 10)).toBe("green"); // 50%
+      expect(el.colourForSegment(5, 10)).toBe("red");   // 60%
+    });
+
+    it("only green_threshold set above the yellow default (85) stays green -> red", async () => {
+      // yellow_threshold falls back to 85, which is below 90 - but it wasn't
+      // set explicitly, so this must not flip to the reversed order.
+      const el = await build({ green_threshold: 90 }, "0");
+      toDispose.push(el);
+      for (let i = 0; i < 9; i++) {
+        expect(el.colourForSegment(i, 10)).toBe("green");
+      }
+      expect(el.colourForSegment(9, 10)).toBe("red");
+    });
+
+    it("only yellow_threshold set below the green default (60) stays green -> red", async () => {
+      const el = await build({ yellow_threshold: 30 }, "0");
+      toDispose.push(el);
+      expect(el.colourForSegment(0, 10)).toBe("green");
+      expect(el.colourForSegment(5, 10)).toBe("green"); // 60% = green default
+      expect(el.colourForSegment(6, 10)).toBe("red");
+    });
+
+    it("a segment exactly on a threshold stays in the lower band (no float drift)", async () => {
+      // 11/20*100 is 55.00000000000001 in floating point; must still count as 55%.
+      const el = await build({ green_threshold: 55, yellow_threshold: 85, segments: 20 }, "0");
+      toDispose.push(el);
+      expect(el.colourForSegment(10, 20)).toBe("green");  // 55%
+      expect(el.colourForSegment(11, 20)).toBe("yellow"); // 60%
+    });
+
+    it("no thresholds uses the 60/85 defaults", async () => {
+      const el = await build({}, "0");
+      toDispose.push(el);
+      expect(el.colourForSegment(5, 10)).toBe("green");
+      expect(el.colourForSegment(6, 10)).toBe("yellow");
+      expect(el.colourForSegment(8, 10)).toBe("red");
+    });
   });
 
   it("renders the requested number of segment DOM nodes", async () => {

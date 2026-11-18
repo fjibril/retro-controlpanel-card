@@ -11,7 +11,8 @@ import "./retro-indicator.js";
  * Classic stacked-LED VU meter. Bottom segments are green, top segments are
  * red, with a yellow band in between. The boundaries are configured as two
  * percentages (`green_threshold`, `yellow_threshold`) which the user can think
- * of as the upper edge of each colour band.
+ * of as the upper edge of each colour band. Setting green_threshold above
+ * yellow_threshold reverses the order (red at the bottom, green at the top).
  */
 @customElement("retro-vu-meter")
 export class RetroVuMeter extends RetroControlBase {
@@ -232,14 +233,29 @@ export class RetroVuMeter extends RetroControlBase {
   /** Colour band for the segment at index `i` (0-based, 0 = first lit). */
   colourForSegment(i: number, segments: number): "green" | "yellow" | "red" {
     const cfg = this.config;
-    // Both thresholds are the upper bound of their colour band as a percentage
-    // of full scale. We trust the values as the user typed them - no sorting -
-    // so that raising green_threshold actually adds more green segments
-    // (and an inverted yellow < green simply means the yellow zone collapses).
-    const greenTop = cfg.green_threshold ?? 60;
-    const yellowTop = cfg.yellow_threshold ?? 85;
+    // Multiply before dividing: ((i + 1) / segments) * 100 picks up float noise
+    // (e.g. 11/20*100 = 55.00000000000001), which would push a segment sitting
+    // exactly on a threshold into the next band.
+    const segPct = ((i + 1) * 100) / segments;
+    const green = cfg.green_threshold;
+    const yellow = cfg.yellow_threshold;
 
-    const segPct = ((i + 1) / segments) * 100;
+    // Reversed scale (low is bad, e.g. a battery level): both thresholds set
+    // explicitly with green above yellow. Each threshold still marks the same
+    // boundary - green_threshold is green|yellow, yellow_threshold is
+    // yellow|red - so the bands run red -> yellow -> green from the bottom.
+    // Requiring both keeps configs that set only one threshold on the
+    // normal order, even if that value crosses the other's default.
+    if (typeof green === "number" && typeof yellow === "number" && green > yellow) {
+      if (segPct <= yellow) return "red";
+      if (segPct <= green) return "yellow";
+      return "green";
+    }
+
+    // Normal scale: each threshold is the upper bound of its colour band as a
+    // percentage of full scale, so raising green_threshold adds green segments.
+    const greenTop = green ?? 60;
+    const yellowTop = yellow ?? 85;
     if (segPct <= greenTop) return "green";
     if (segPct <= yellowTop) return "yellow";
     return "red";

@@ -292,8 +292,8 @@ Colours change at the exact moment, from a timer in the browser.
 | ------------------- | --------------------------------- | ------- | ---------------------------------------------------- |
 | `min` / `max`       | `number`                          | `0` / `100` | Value range mapped onto the full bar.            |
 | `segments`          | `number`                          | `10`    | How many LEDs in the bar.                            |
-| `green_threshold`   | `number` (% of full scale)        | `60`    | Bottom band is green up to this percentage.          |
-| `yellow_threshold`  | `number` (% of full scale)        | `85`    | Middle band is yellow up to this percentage; above is red. |
+| `green_threshold`   | `number` (% of full scale)        | `60`    | Boundary between the green and yellow bands.         |
+| `yellow_threshold`  | `number` (% of full scale)        | `85`    | Boundary between the yellow and red bands.           |
 | `orientation`       | `vertical` \| `horizontal`        | `vertical` | Bar direction.                                  |
 | `show_scale`        | `boolean`                         | `false` | Engraved numeric scale beside the bar.               |
 | `scale_divisions`   | `number`                          | `4`     | Divisions on the scale (`4` = five numbers).         |
@@ -303,9 +303,27 @@ Colours change at the exact moment, from a timer in the browser.
 | `attribute`         | `string`                          | see above | Read this attribute instead of the state.          |
 | `indicator`         | colour                            | —       | Status LED beside the label (see above).             |
 
-Both thresholds are taken as written, with no sorting. If `yellow_threshold` is
-below `green_threshold`, the yellow band disappears: segments are green up to
-`green_threshold` and red above it.
+The order of the two thresholds sets the direction of the colours:
+
+- **`green_threshold` below `yellow_threshold`** (the default, 60 / 85): green
+  at the bottom, red at the top - for levels where high is bad, like audio or
+  CPU load. Green up to `green_threshold`, yellow up to `yellow_threshold`, red
+  above.
+- **`green_threshold` above `yellow_threshold`**: red at the bottom, green at
+  the top - for levels where low is bad, like a battery or a tank. Red up to
+  `yellow_threshold`, yellow up to `green_threshold`, green above.
+
+```yaml
+- type: vu_meter
+  entity: sensor.phone_battery
+  green_threshold: 70     # 70-100 %: green
+  yellow_threshold: 20    # 20-70 %: yellow, 0-20 %: red
+```
+
+A segment sitting exactly on a threshold takes the lower band's colour. The
+reversed order needs both thresholds set: with only one, the other keeps its
+default and the colours stay green-at-the-bottom. Equal thresholds leave out
+the yellow band.
 
 ### `type: gauge`
 

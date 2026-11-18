@@ -102,9 +102,13 @@ export interface VuMeterConfig extends BaseControlConfig {
   type: "vu_meter";
   min?: number;
   max?: number;
-  /** Percentage (0-100) at which segments become green vs yellow. */
+  /**
+   * Percentage (0-100) at the green/yellow boundary. When both thresholds are
+   * set and this one is above yellow_threshold, the colour order reverses
+   * (red -> yellow -> green from the bottom).
+   */
   green_threshold?: number;
-  /** Percentage (0-100) at which segments become yellow vs red. */
+  /** Percentage (0-100) at the yellow/red boundary. */
   yellow_threshold?: number;
   segments?: number;
   orientation?: "vertical" | "horizontal";
